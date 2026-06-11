@@ -1,5 +1,25 @@
 include: package:lints/recommended.yaml
 
+analyzer:
+  errors:
+    # Legacy codebase baseline for Flutter 3.24 analysis. Keep unlisted
+    # analyzer errors fatal so new serious issues still fail `flutter analyze`.
+    avoid_init_to_null: ignore
+    avoid_return_types_on_setters: ignore
+    camel_case_types: ignore
+    constant_identifier_names: ignore
+    curly_braces_in_flow_control_structures: ignore
+    deprecated_member_use: ignore
+    hash_and_equals: ignore
+    prefer_final_fields: ignore
+    unnecessary_import: ignore
+    unnecessary_null_comparison: ignore
+    unnecessary_string_escapes: ignore
+    unnecessary_string_interpolations: ignore
+    unnecessary_this: ignore
+    unused_element: ignore
+    unused_import: ignore
+
 linter:
   rules:
     non_constant_identifier_names: false

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show DisplayFeature, DisplayFeatureType;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -74,6 +75,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
+  var _showLocalKeyboardPane = true;
 
   Worker? _waylandKeyboardGateWorker;
   bool _waylandKeyboardGateInitialized = false;
@@ -83,6 +85,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   final TextEditingController _textController =
       TextEditingController(text: initText);
+  final TextEditingController _localKeyboardTextController =
+      TextEditingController();
 
   _RemotePageState(String id) {
     initSharedStates(id);
@@ -160,6 +164,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     await gFFI.invokeMethod("enable_soft_keyboard", true);
     _mobileFocusNode.dispose();
     _physicalFocusNode.dispose();
+    _localKeyboardTextController.dispose();
     clearWaylandKeyboardPromptSuppressedForConnection(sessionId.toString());
     _waylandKeyboardGateWorker?.dispose();
     inputModel.keyboardInputAllowed = true;
@@ -517,10 +522,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                               }
                               return Container(
                                 color: MyTheme.canvasColor,
-                                child: RawTouchGestureDetectorRegion(
-                                  child: getBodyForMobile(),
-                                  ffi: gFFI,
-                                ),
+                                child: _buildBodyForMobileWithTouchRegion(),
                               );
                             }),
                           ),
@@ -550,6 +552,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   Widget getBottomAppBar() {
     final ffiModel = Provider.of<FfiModel>(context);
+    final useSplitKeyboard = _shouldUseFoldableSplitKeyboard(context);
+    IconButton keyboardButton() => IconButton(
+        color: Colors.white,
+        icon: Icon(useSplitKeyboard && _showLocalKeyboardPane
+            ? Icons.keyboard_hide
+            : Icons.keyboard),
+        onPressed: useSplitKeyboard ? _toggleLocalKeyboardPane : openKeyboard);
     return BottomAppBar(
       elevation: 10,
       color: MyTheme.accent,
@@ -579,10 +588,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                       ? []
                       : gFFI.ffiModel.isPeerAndroid
                           ? [
-                              IconButton(
-                                  color: Colors.white,
-                                  icon: Icon(Icons.keyboard),
-                                  onPressed: openKeyboard),
+                              keyboardButton(),
                               IconButton(
                                 color: Colors.white,
                                 icon: const Icon(Icons.build),
@@ -591,10 +597,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                               )
                             ]
                           : [
-                              IconButton(
-                                  color: Colors.white,
-                                  icon: Icon(Icons.keyboard),
-                                  onPressed: openKeyboard),
+                              keyboardButton(),
                               IconButton(
                                 color: Colors.white,
                                 icon: Icon(gFFI.ffiModel.touchMode
@@ -652,66 +655,253 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       !gFFI.canvasModel.cursorEmbedded &&
       !gFFI.inputModel.relativeMouseMode.value;
 
+  bool _isFoldableDisplayFeature(DisplayFeature feature) =>
+      feature.type == DisplayFeatureType.hinge ||
+      feature.type == DisplayFeatureType.fold;
+
+  bool _shouldUseFoldableSplitKeyboard(BuildContext context) {
+    if (!isAndroid) {
+      return false;
+    }
+    final mediaQuery = MediaQuery.of(context);
+    final size = mediaQuery.size;
+    final hasFoldOrHinge =
+        mediaQuery.displayFeatures.any(_isFoldableDisplayFeature);
+    return size.shortestSide >= 600 || size.width >= 700 || hasFoldOrHinge;
+  }
+
+  bool _preferColumnSplitKeyboard(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    for (final feature in mediaQuery.displayFeatures) {
+      if (!_isFoldableDisplayFeature(feature)) {
+        continue;
+      }
+      if (feature.bounds.width > feature.bounds.height) {
+        return true;
+      }
+      if (feature.bounds.height > feature.bounds.width) {
+        return false;
+      }
+    }
+    return mediaQuery.size.width >= mediaQuery.size.height;
+  }
+
+  void _disableRemoteSoftKeyboardForSplitMode() {
+    if (!_showEdit && !_mobileFocusNode.hasFocus) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _timer?.cancel();
+      gFFI.invokeMethod("enable_soft_keyboard", false);
+      _mobileFocusNode.unfocus();
+      if (_showEdit) {
+        setState(() => _showEdit = false);
+      }
+    });
+  }
+
+  void _toggleLocalKeyboardPane() {
+    setState(() {
+      _showLocalKeyboardPane = !_showLocalKeyboardPane;
+      _showEdit = false;
+    });
+    _timer?.cancel();
+    gFFI.invokeMethod("enable_soft_keyboard", false);
+    _mobileFocusNode.unfocus();
+    if (!_showLocalKeyboardPane) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+  }
+
+  void _withLocalKeyboardInput(VoidCallback action) {
+    final allowWaylandKeyboard =
+        mainGetPeerBoolOptionSync(widget.id, kPeerOptionAllowWaylandKeyboard);
+    if (shouldShowWaylandKeyboardPrompt(
+      connectionId: sessionId.toString(),
+      isWaylandPeer: _shouldGateKeyboardForWayland(),
+      allowWaylandKeyboardRemembered: allowWaylandKeyboard,
+    )) {
+      inputModel.keyboardInputAllowed = false;
+      showWaylandKeyboardInputWarningDialog(
+        id: widget.id,
+        connectionId: sessionId.toString(),
+        ffi: gFFI,
+        onEnable: () async {
+          if (!mounted) {
+            return;
+          }
+          inputModel.keyboardInputAllowed = true;
+          action();
+        },
+      );
+      return;
+    }
+    inputModel.keyboardInputAllowed = true;
+    action();
+  }
+
+  void _inputLocalKeyboardChar(String char) {
+    _withLocalKeyboardInput(() => inputChar(char));
+  }
+
+  void _inputLocalKeyboardKey(String key) {
+    _withLocalKeyboardInput(() => inputModel.inputKey(key));
+  }
+
+  void _sendLocalKeyboardText(String text) {
+    if (text.isEmpty) {
+      return;
+    }
+    _withLocalKeyboardInput(() {
+      bind.sessionInputString(sessionId: sessionId, value: text);
+      _localKeyboardTextController.clear();
+    });
+  }
+
+  double _localKeyboardPaneWidth(Size size) =>
+      (size.width * 0.36).clamp(300.0, 430.0).toDouble();
+
+  double _localKeyboardPaneHeight(Size size) =>
+      (size.height * 0.38).clamp(220.0, 320.0).toDouble();
+
+  Widget _buildBodyForMobileWithTouchRegion() {
+    if (_shouldUseFoldableSplitKeyboard(context)) {
+      return getBodyForMobile();
+    }
+    return RawTouchGestureDetectorRegion(
+      child: getBodyForMobile(),
+      ffi: gFFI,
+    );
+  }
+
   Widget getBodyForMobile() {
+    final useSplitKeyboard = _shouldUseFoldableSplitKeyboard(context);
     final keyboardIsVisible = keyboardVisibilityController.isVisible;
+    if (useSplitKeyboard) {
+      _disableRemoteSoftKeyboardForSplitMode();
+      return _buildFoldableSplitKeyboardBody(context);
+    }
     return Container(
         color: MyTheme.canvasColor,
-        child: Stack(children: () {
-          final paints = [
-            ImagePaint(ffiModel: gFFI.ffiModel),
-            Positioned(
-              top: 10,
-              right: 10,
-              child: QualityMonitor(gFFI.qualityMonitorModel),
-            ),
-            KeyHelpTools(
-                keyboardIsVisible: keyboardIsVisible,
-                showGestureHelp: _showGestureHelp),
+        child: _buildRemoteCanvasStack(
+          includeHiddenTextInput: true,
+          keyboardIsVisible: keyboardIsVisible,
+        ));
+  }
+
+  Widget _buildFoldableSplitKeyboardBody(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final remoteCanvas = RawTouchGestureDetectorRegion(
+      child: _buildRemoteCanvasStack(
+        includeHiddenTextInput: false,
+        keyboardIsVisible: false,
+      ),
+      ffi: gFFI,
+    );
+    if (!_showLocalKeyboardPane) {
+      return Container(color: MyTheme.canvasColor, child: remoteCanvas);
+    }
+
+    final keyboardPane = LocalRemoteKeyboard(
+      textController: _localKeyboardTextController,
+      onCharacter: _inputLocalKeyboardChar,
+      onSpecialKey: _inputLocalKeyboardKey,
+      onSendText: _sendLocalKeyboardText,
+    );
+
+    if (_preferColumnSplitKeyboard(context)) {
+      return Container(
+        color: MyTheme.canvasColor,
+        child: Column(
+          children: [
+            Expanded(child: remoteCanvas),
             SizedBox(
-              width: 0,
-              height: 0,
-              child: !_showEdit
-                  ? Container()
-                  : TextFormField(
-                      textInputAction: TextInputAction.newline,
-                      autocorrect: false,
-                      // Flutter 3.16.9 Android.
-                      // `enableSuggestions` causes secure keyboard to be shown.
-                      // https://github.com/flutter/flutter/issues/139143
-                      // https://github.com/flutter/flutter/issues/146540
-                      // enableSuggestions: false,
-                      autofocus: true,
-                      focusNode: _mobileFocusNode,
-                      maxLines: null,
-                      controller: _textController,
-                      // trick way to make backspace work always
-                      keyboardType: TextInputType.multiline,
-                      // `onChanged` may be called depending on the input method if this widget is wrapped in
-                      // `Focus(onKeyEvent: ..., child: ...)`
-                      // For `Backspace` button in the soft keyboard:
-                      // en/fr input method:
-                      //      1. The button will not trigger `onKeyEvent` if the text field is not empty.
-                      //      2. The button will trigger `onKeyEvent` if the text field is empty.
-                      // ko/zh/ja input method: the button will trigger `onKeyEvent`
-                      //                     and the event will not popup if `KeyEventResult.handled` is returned.
-                      onChanged: handleSoftKeyboardInput,
-                    ).workaroundFreezeLinuxMint(),
+              height: _localKeyboardPaneHeight(size),
+              child: keyboardPane,
             ),
-          ];
-          if (showCursorPaint) {
-            paints.add(CursorPaint(widget.id));
-          }
-          if (gFFI.ffiModel.touchMode) {
-            paints.add(FloatingMouse(
-              ffi: gFFI,
-            ));
-          } else {
-            paints.add(FloatingMouseWidgets(
-              ffi: gFFI,
-            ));
-          }
-          return paints;
-        }()));
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      color: MyTheme.canvasColor,
+      child: Row(
+        children: [
+          Expanded(child: remoteCanvas),
+          SizedBox(
+            width: _localKeyboardPaneWidth(size),
+            child: keyboardPane,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRemoteCanvasStack({
+    required bool includeHiddenTextInput,
+    required bool keyboardIsVisible,
+  }) {
+    return Stack(children: () {
+      final paints = [
+        ImagePaint(ffiModel: gFFI.ffiModel),
+        Positioned(
+          top: 10,
+          right: 10,
+          child: QualityMonitor(gFFI.qualityMonitorModel),
+        ),
+        KeyHelpTools(
+            keyboardIsVisible: keyboardIsVisible,
+            showGestureHelp: _showGestureHelp),
+        if (includeHiddenTextInput)
+          SizedBox(
+            width: 0,
+            height: 0,
+            child: !_showEdit
+                ? Container()
+                : TextFormField(
+                    textInputAction: TextInputAction.newline,
+                    autocorrect: false,
+                    // Flutter 3.16.9 Android.
+                    // `enableSuggestions` causes secure keyboard to be shown.
+                    // https://github.com/flutter/flutter/issues/139143
+                    // https://github.com/flutter/flutter/issues/146540
+                    // enableSuggestions: false,
+                    autofocus: true,
+                    focusNode: _mobileFocusNode,
+                    maxLines: null,
+                    controller: _textController,
+                    // trick way to make backspace work always
+                    keyboardType: TextInputType.multiline,
+                    // `onChanged` may be called depending on the input method if this widget is wrapped in
+                    // `Focus(onKeyEvent: ..., child: ...)`
+                    // For `Backspace` button in the soft keyboard:
+                    // en/fr input method:
+                    //      1. The button will not trigger `onKeyEvent` if the text field is not empty.
+                    //      2. The button will trigger `onKeyEvent` if the text field is empty.
+                    // ko/zh/ja input method: the button will trigger `onKeyEvent`
+                    //                     and the event will not popup if `KeyEventResult.handled` is returned.
+                    onChanged: handleSoftKeyboardInput,
+                  ).workaroundFreezeLinuxMint(),
+          ),
+      ];
+      if (showCursorPaint) {
+        paints.add(CursorPaint(widget.id));
+      }
+      if (gFFI.ffiModel.touchMode) {
+        paints.add(FloatingMouse(
+          ffi: gFFI,
+        ));
+      } else {
+        paints.add(FloatingMouseWidgets(
+          ffi: gFFI,
+        ));
+      }
+      return paints;
+    }());
   }
 
   Widget getBodyForDesktopWithListener() {
@@ -911,6 +1101,232 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   //         ]));
   //   }, clickMaskDismiss: true);
   // }
+}
+
+class LocalRemoteKeyboard extends StatelessWidget {
+  const LocalRemoteKeyboard({
+    Key? key,
+    required this.textController,
+    required this.onCharacter,
+    required this.onSpecialKey,
+    required this.onSendText,
+  }) : super(key: key);
+
+  final TextEditingController textController;
+  final ValueChanged<String> onCharacter;
+  final ValueChanged<String> onSpecialKey;
+  final ValueChanged<String> onSendText;
+
+  List<Widget> _withHorizontalGaps(List<Widget> children, double gap) {
+    final separated = <Widget>[];
+    for (var i = 0; i < children.length; i++) {
+      if (i > 0) {
+        separated.add(SizedBox(width: gap));
+      }
+      separated.add(children[i]);
+    }
+    return separated;
+  }
+
+  Widget _keyButton({
+    required VoidCallback onPressed,
+    String? label,
+    IconData? icon,
+    int flex = 1,
+    required double height,
+  }) {
+    return Expanded(
+      flex: flex,
+      child: SizedBox(
+        height: height,
+        child: TextButton(
+          style: TextButton.styleFrom(
+            backgroundColor: const Color(0xFF3B3D40),
+            foregroundColor: Colors.white,
+            minimumSize: Size.zero,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ),
+          onPressed: onPressed,
+          child: icon == null
+              ? FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label ?? '',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                )
+              : Icon(icon, size: 18),
+        ),
+      ),
+    );
+  }
+
+  Widget _characterRow(String characters, double keyHeight, double gap) {
+    final keys = characters
+        .split('')
+        .map((char) => _keyButton(
+              label: char,
+              height: keyHeight,
+              onPressed: () => onCharacter(char),
+            ))
+        .toList();
+    return Row(children: _withHorizontalGaps(keys, gap));
+  }
+
+  Widget _textInputRow(BuildContext context, double keyHeight, double gap) {
+    return Row(
+      children: [
+        Expanded(
+          child: SizedBox(
+            height: keyHeight,
+            child: TextField(
+              controller: textController,
+              minLines: 1,
+              maxLines: 1,
+              textInputAction: TextInputAction.done,
+              autocorrect: false,
+              onSubmitted: onSendText,
+              style: const TextStyle(color: Colors.white),
+              cursorColor: MyTheme.accent,
+              decoration: InputDecoration(
+                isDense: true,
+                filled: true,
+                fillColor: const Color(0xFF151719),
+                hintText: translate('Text'),
+                hintStyle: const TextStyle(color: Colors.white54),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: const BorderSide(color: Color(0xFF4B4D50)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: const BorderSide(color: MyTheme.accent),
+                ),
+              ),
+            ),
+          ),
+        ),
+        SizedBox(width: gap),
+        SizedBox(
+          height: keyHeight,
+          width: 108,
+          child: ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: MyTheme.accent,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+            onPressed: () => onSendText(textController.text),
+            icon: const Icon(Icons.send, size: 16),
+            label: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(translate('Send text')),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _specialRow(double keyHeight, double gap) {
+    final keys = [
+      _keyButton(
+        label: 'Esc',
+        height: keyHeight,
+        onPressed: () => onSpecialKey('VK_ESCAPE'),
+      ),
+      _keyButton(
+        label: 'Tab',
+        height: keyHeight,
+        onPressed: () => onSpecialKey('VK_TAB'),
+      ),
+      _keyButton(
+        icon: Icons.backspace_outlined,
+        flex: 2,
+        height: keyHeight,
+        onPressed: () => onSpecialKey('VK_BACK'),
+      ),
+    ];
+    return Row(children: _withHorizontalGaps(keys, gap));
+  }
+
+  Widget _bottomRow(double keyHeight, double gap) {
+    final keys = [
+      _keyButton(
+        label: 'Space',
+        flex: 5,
+        height: keyHeight,
+        onPressed: () => onCharacter(' '),
+      ),
+      _keyButton(
+        icon: Icons.keyboard_return,
+        flex: 2,
+        height: keyHeight,
+        onPressed: () => onCharacter('\n'),
+      ),
+    ];
+    return Row(children: _withHorizontalGaps(keys, gap));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF202124),
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(
+            top: BorderSide(color: Color(0xFF4B4D50)),
+            left: BorderSide(color: Color(0xFF4B4D50)),
+          ),
+        ),
+        child: LayoutBuilder(builder: (context, constraints) {
+          final compact =
+              constraints.maxHeight < 270 || constraints.maxWidth < 360;
+          final keyHeight = compact ? 34.0 : 40.0;
+          final gap = compact ? 4.0 : 6.0;
+          return SingleChildScrollView(
+            padding: EdgeInsets.all(compact ? 8 : 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _textInputRow(context, keyHeight, gap),
+                SizedBox(height: gap),
+                _characterRow('1234567890', keyHeight, gap),
+                SizedBox(height: gap),
+                _characterRow('qwertyuiop', keyHeight, gap),
+                SizedBox(height: gap),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: keyHeight * 0.35),
+                  child: _characterRow('asdfghjkl', keyHeight, gap),
+                ),
+                SizedBox(height: gap),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: keyHeight * 0.7),
+                  child: _characterRow('zxcvbnm', keyHeight, gap),
+                ),
+                SizedBox(height: gap),
+                _specialRow(keyHeight, gap),
+                SizedBox(height: gap),
+                _bottomRow(keyHeight, gap),
+              ],
+            ),
+          );
+        }),
+      ),
+    );
+  }
 }
 
 class KeyHelpTools extends StatefulWidget {
