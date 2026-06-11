@@ -56,3 +56,8 @@ vcpkg_installed
 flutter/lib/generated_plugin_registrant.dart
 libsciter.dylib
 flutter/web/
+
+# Local Android signing material
+key.properties
+*.jks
+.dev/keystores/
