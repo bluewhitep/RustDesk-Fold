@@ -1,3 +1,28 @@
+import groovy.xml.XmlSlurper
+import org.gradle.api.tasks.compile.JavaCompile
+
+def forceAndroidJavaTarget = { subproject ->
+    def androidExtension = subproject.extensions.findByName("android")
+    if (androidExtension != null) {
+        androidExtension.compileOptions {
+            sourceCompatibility JavaVersion.VERSION_1_8
+            targetCompatibility JavaVersion.VERSION_1_8
+        }
+    }
+    subproject.tasks.withType(JavaCompile).configureEach { task ->
+        task.sourceCompatibility = JavaVersion.VERSION_1_8.toString()
+        task.targetCompatibility = JavaVersion.VERSION_1_8.toString()
+    }
+}
+
+def forceKotlinJvmTarget = { subproject ->
+    subproject.tasks.configureEach { task ->
+        if (task.hasProperty("kotlinOptions")) {
+            task.kotlinOptions.jvmTarget = "1.8"
+        }
+    }
+}
+
 allprojects {
     repositories {
         google()
@@ -9,6 +34,35 @@ allprojects {
 rootProject.buildDir = '../build'
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects { subproject ->
+    subproject.plugins.withId("com.android.library") {
+        def androidExtension = subproject.extensions.findByName("android")
+        if (androidExtension != null) {
+            forceAndroidJavaTarget(subproject)
+            if (!androidExtension.namespace) {
+                def manifestFile = subproject.file("src/main/AndroidManifest.xml")
+                if (manifestFile.exists()) {
+                    def manifestPackage = new XmlSlurper(false, false).parse(manifestFile).@package.text()
+                    if (manifestPackage) {
+                        androidExtension.namespace = manifestPackage
+                    }
+                }
+            }
+        }
+    }
+    subproject.plugins.withId("kotlin-android") {
+        forceKotlinJvmTarget(subproject)
+    }
+    subproject.plugins.withId("org.jetbrains.kotlin.android") {
+        forceKotlinJvmTarget(subproject)
+    }
+    subproject.afterEvaluate {
+        if (subproject.plugins.hasPlugin("com.android.library")) {
+            forceAndroidJavaTarget(subproject)
+            forceKotlinJvmTarget(subproject)
+        }
+    }
 }
 subprojects {
     project.evaluationDependsOn(':app')
