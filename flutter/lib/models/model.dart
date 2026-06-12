@@ -2114,6 +2114,11 @@ enum EdgeScrollState {
   active,
 }
 
+enum CanvasViewportFit {
+  contain,
+  cover,
+}
+
 class EdgeScrollFallbackState {
   final CanvasModel _owner;
 
@@ -2171,6 +2176,9 @@ class CanvasModel with ChangeNotifier {
   double _scale = 1.0;
   double _devicePixelRatio = 1.0;
   Size _size = Size.zero;
+  Size? _viewportSizeOverride;
+  CanvasViewportFit? _viewportFitOverride;
+  bool _viewportOverrideDirty = false;
   // the tabbar over the image
   // double tabBarHeight = 0.0;
   // the window border's width
@@ -2255,6 +2263,13 @@ class CanvasModel with ChangeNotifier {
       isDesktop ? windowBorderWidth + kDragToResizeAreaPadding.bottom : 0;
 
   Size getSize() {
+    final viewportSizeOverride = _viewportSizeOverride;
+    if (viewportSizeOverride != null) {
+      return Size(
+        max(viewportSizeOverride.width, 0.0),
+        max(viewportSizeOverride.height, 0.0),
+      );
+    }
     final mediaData = MediaQueryData.fromView(ui.window);
     final size = mediaData.size;
     // If minimized, w or h may be negative here.
@@ -2291,6 +2306,30 @@ class CanvasModel with ChangeNotifier {
     return Size(w < 0 ? 0 : w, h < 0 ? 0 : h);
   }
 
+  bool setViewportOverride(Size size, {required CanvasViewportFit fit}) {
+    final nextSize = Size(
+      size.width.isFinite ? max(size.width, 0.0) : 0.0,
+      size.height.isFinite ? max(size.height, 0.0) : 0.0,
+    );
+    if (_viewportSizeOverride == nextSize && _viewportFitOverride == fit) {
+      return false;
+    }
+    _viewportSizeOverride = nextSize;
+    _viewportFitOverride = fit;
+    _viewportOverrideDirty = true;
+    return true;
+  }
+
+  bool clearViewportOverride() {
+    if (_viewportSizeOverride == null && _viewportFitOverride == null) {
+      return false;
+    }
+    _viewportSizeOverride = null;
+    _viewportFitOverride = null;
+    _viewportOverrideDirty = true;
+    return true;
+  }
+
   // mobile only
   double getAdjustY() {
     final bottom =
@@ -2322,7 +2361,9 @@ class CanvasModel with ChangeNotifier {
     // ViewStyle fields and is not captured by the equality check. Therefore, we must
     // allow updates to proceed when style == kRemoteViewStyleCustom, even if the
     // rest of the ViewStyle fields are unchanged.
-    if (_lastViewStyle == viewStyle && style != kRemoteViewStyleCustom) {
+    if (!_viewportOverrideDirty &&
+        _lastViewStyle == viewStyle &&
+        style != kRemoteViewStyleCustom) {
       return;
     }
     if (_lastViewStyle.style != viewStyle.style) {
@@ -2332,7 +2373,18 @@ class CanvasModel with ChangeNotifier {
     _scale = viewStyle.scale;
 
     // Apply custom scale percent when in Custom mode
-    if (style == kRemoteViewStyleCustom) {
+    if (_viewportFitOverride != null) {
+      if (size.width != 0 &&
+          size.height != 0 &&
+          displayWidth != 0 &&
+          displayHeight != 0) {
+        final xscale = size.width / displayWidth;
+        final yscale = size.height / displayHeight;
+        _scale = _viewportFitOverride == CanvasViewportFit.cover
+            ? max(xscale, yscale)
+            : min(xscale, yscale);
+      }
+    } else if (style == kRemoteViewStyleCustom) {
       try {
         _scale = await getSessionCustomScale(sessionId);
       } catch (e, stack) {
@@ -2341,6 +2393,7 @@ class CanvasModel with ChangeNotifier {
         _scale = 1.0;
       }
     }
+    _viewportOverrideDirty = false;
 
     _devicePixelRatio = ui.window.devicePixelRatio;
     if (kIgnoreDpi) {
