@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' show DisplayFeature, DisplayFeatureType;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
@@ -27,6 +29,491 @@ import '../widgets/dialog.dart';
 import '../widgets/custom_scale_widget.dart';
 
 final initText = '1' * 1024;
+
+enum _FoldRemoteDisplayMode {
+  contain,
+  fill,
+  panZoom,
+}
+
+enum _TrackpadPlacement {
+  left,
+  right,
+}
+
+enum _LocalKeyboardLayer {
+  main,
+  system,
+  symbols,
+}
+
+enum _FoldLanguageSwitchMode {
+  macLanguageCycle,
+  windowsLanguageCycle,
+  linuxLanguageCycle,
+}
+
+enum _FoldLanguageShortcutSlot {
+  macPrev,
+  macNext,
+  winPrev,
+  winNext,
+  linuxPrev,
+  linuxNext,
+}
+
+enum _FoldShortcutCaptureTarget {
+  previous,
+  next,
+}
+
+enum _FoldModifierDisplayStyle {
+  mac,
+  win,
+  linux,
+}
+
+enum _FoldKeyboardInputMode {
+  textInjection,
+  remoteImeKeyEvents,
+}
+
+class _FoldRemoteImeKeyEvent {
+  const _FoldRemoteImeKeyEvent({
+    required this.keyName,
+    required this.usbHid,
+  });
+
+  final String keyName;
+  final int usbHid;
+}
+
+_FoldRemoteImeKeyEvent? _foldRemoteImeKeyEventForCharacter(String char) {
+  if (char == ' ') {
+    return const _FoldRemoteImeKeyEvent(keyName: 'VK_SPACE', usbHid: 0x2C);
+  }
+  if (char == '\n') {
+    return const _FoldRemoteImeKeyEvent(keyName: 'VK_RETURN', usbHid: 0x28);
+  }
+  if (char.length != 1) {
+    return null;
+  }
+  final codeUnit = char.codeUnitAt(0);
+  if (codeUnit >= 0x61 && codeUnit <= 0x7A) {
+    return _FoldRemoteImeKeyEvent(
+      keyName: 'VK_${char.toUpperCase()}',
+      usbHid: 0x04 + codeUnit - 0x61,
+    );
+  }
+  if (codeUnit >= 0x41 && codeUnit <= 0x5A) {
+    return _FoldRemoteImeKeyEvent(
+      keyName: 'VK_$char',
+      usbHid: 0x04 + codeUnit - 0x41,
+    );
+  }
+  if (codeUnit >= 0x30 && codeUnit <= 0x39) {
+    final hid = codeUnit == 0x30 ? 0x27 : 0x1E + codeUnit - 0x31;
+    return _FoldRemoteImeKeyEvent(keyName: 'VK_$char', usbHid: hid);
+  }
+  return null;
+}
+
+_FoldRemoteImeKeyEvent? _foldRemoteImeKeyEventForKeyName(String key) {
+  if (key.startsWith('VK_') && key.length == 4) {
+    return _foldRemoteImeKeyEventForCharacter(key.substring(3).toLowerCase());
+  }
+  switch (key) {
+    case 'VK_ENTER':
+    case 'VK_RETURN':
+      return _FoldRemoteImeKeyEvent(keyName: key, usbHid: 0x28);
+    case 'VK_ESCAPE':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_ESCAPE', usbHid: 0x29);
+    case 'VK_BACK':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_BACK', usbHid: 0x2A);
+    case 'VK_TAB':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_TAB', usbHid: 0x2B);
+    case 'VK_SPACE':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_SPACE', usbHid: 0x2C);
+    case 'VK_INSERT':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_INSERT', usbHid: 0x49);
+    case 'VK_HOME':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_HOME', usbHid: 0x4A);
+    case 'VK_PRIOR':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_PRIOR', usbHid: 0x4B);
+    case 'VK_DELETE':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_DELETE', usbHid: 0x4C);
+    case 'VK_END':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_END', usbHid: 0x4D);
+    case 'VK_NEXT':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_NEXT', usbHid: 0x4E);
+    case 'VK_RIGHT':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_RIGHT', usbHid: 0x4F);
+    case 'VK_LEFT':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_LEFT', usbHid: 0x50);
+    case 'VK_DOWN':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_DOWN', usbHid: 0x51);
+    case 'VK_UP':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_UP', usbHid: 0x52);
+  }
+  if (key.startsWith('VK_F')) {
+    final number = int.tryParse(key.substring(4));
+    if (number != null && number >= 1 && number <= 12) {
+      return _FoldRemoteImeKeyEvent(
+        keyName: key,
+        usbHid: 0x3A + number - 1,
+      );
+    }
+  }
+  return null;
+}
+
+const _kFoldLanguageSwitchModeOption = 'fold.languageSwitchMode';
+const _kFoldModifierDisplayStyleOption = 'fold.modifierDisplayStyle';
+const _kFoldRemotePaneRatioOption = 'fold.remotePaneRatio';
+const _kFoldKeyboardInputModeOption = 'fold.keyboardInputMode';
+
+class _FoldModifierLabels {
+  const _FoldModifierLabels({
+    required this.control,
+    required this.alt,
+    required this.meta,
+  });
+
+  final String control;
+  final String alt;
+  final String meta;
+}
+
+_FoldModifierLabels _foldModifierLabels(_FoldModifierDisplayStyle style) {
+  switch (style) {
+    case _FoldModifierDisplayStyle.mac:
+      return _FoldModifierLabels(
+        control: translate('Control'),
+        alt: translate('Option'),
+        meta: translate('Command'),
+      );
+    case _FoldModifierDisplayStyle.win:
+      return _FoldModifierLabels(
+        control: translate('Ctrl'),
+        alt: translate('Alt'),
+        meta: translate('Win'),
+      );
+    case _FoldModifierDisplayStyle.linux:
+      return _FoldModifierLabels(
+        control: translate('Ctrl'),
+        alt: translate('Alt'),
+        meta: translate('Super'),
+      );
+  }
+}
+
+class _FoldKeyShortcut {
+  const _FoldKeyShortcut({
+    required this.key,
+    this.ctrl = false,
+    this.alt = false,
+    this.shift = false,
+    this.command = false,
+    this.label,
+  });
+
+  final String key;
+  final bool ctrl;
+  final bool alt;
+  final bool shift;
+  final bool command;
+  final String? label;
+
+  String displayLabelFor(_FoldModifierDisplayStyle style) {
+    final labels = _foldModifierLabels(style);
+    final parts = <String>[
+      if (shift) translate('Shift'),
+      if (ctrl) labels.control,
+      if (style == _FoldModifierDisplayStyle.mac) ...[
+        if (alt) labels.alt,
+        if (command) labels.meta,
+      ] else ...[
+        if (command) labels.meta,
+        if (alt) labels.alt,
+      ],
+      _foldShortcutKeyLabel(key, style),
+    ];
+    return parts.join(' + ');
+  }
+
+  String toOptionValue() => jsonEncode({
+        'key': key,
+        'ctrl': ctrl,
+        'alt': alt,
+        'shift': shift,
+        'command': command,
+        if (label != null) 'label': label,
+      });
+
+  static _FoldKeyShortcut fromOptionValue(
+      String value, _FoldKeyShortcut fallback) {
+    if (value.isEmpty) {
+      return fallback;
+    }
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is! Map) {
+        return fallback;
+      }
+      final key = decoded['key'];
+      if (key is! String || key.isEmpty) {
+        return fallback;
+      }
+      return _FoldKeyShortcut(
+        key: key,
+        ctrl: decoded['ctrl'] == true,
+        alt: decoded['alt'] == true,
+        shift: decoded['shift'] == true,
+        command: decoded['command'] == true,
+        label: decoded['label'] is String ? decoded['label'] as String : null,
+      );
+    } catch (_) {
+      return fallback;
+    }
+  }
+}
+
+const Map<_FoldLanguageShortcutSlot, _FoldKeyShortcut>
+    _kDefaultFoldLanguageShortcuts = {
+  _FoldLanguageShortcutSlot.macPrev: _FoldKeyShortcut(
+    key: 'VK_SPACE',
+    ctrl: true,
+    label: 'Ctrl+Space',
+  ),
+  _FoldLanguageShortcutSlot.macNext: _FoldKeyShortcut(
+    key: 'VK_SPACE',
+    ctrl: true,
+    alt: true,
+    label: 'Ctrl+Alt+Space',
+  ),
+  _FoldLanguageShortcutSlot.winPrev: _FoldKeyShortcut(
+    key: 'VK_SHIFT',
+    alt: true,
+    label: 'Alt+Shift',
+  ),
+  _FoldLanguageShortcutSlot.winNext: _FoldKeyShortcut(
+    key: 'VK_SPACE',
+    command: true,
+    label: 'Win+Space',
+  ),
+  _FoldLanguageShortcutSlot.linuxPrev: _FoldKeyShortcut(
+    key: 'VK_SHIFT',
+    ctrl: true,
+    label: 'Ctrl+Shift',
+  ),
+  _FoldLanguageShortcutSlot.linuxNext: _FoldKeyShortcut(
+    key: 'VK_SPACE',
+    command: true,
+    label: 'Super+Space',
+  ),
+};
+
+String _foldLanguageSwitchModeValue(_FoldLanguageSwitchMode mode) {
+  switch (mode) {
+    case _FoldLanguageSwitchMode.macLanguageCycle:
+      return 'macLanguageCycle';
+    case _FoldLanguageSwitchMode.windowsLanguageCycle:
+      return 'windowsLanguageCycle';
+    case _FoldLanguageSwitchMode.linuxLanguageCycle:
+      return 'linuxLanguageCycle';
+  }
+}
+
+_FoldLanguageSwitchMode _foldLanguageSwitchModeFromValue(String value) {
+  if (value == 'macGlobal') {
+    return _FoldLanguageSwitchMode.macLanguageCycle;
+  }
+  for (final mode in _FoldLanguageSwitchMode.values) {
+    if (_foldLanguageSwitchModeValue(mode) == value) {
+      return mode;
+    }
+  }
+  return _FoldLanguageSwitchMode.macLanguageCycle;
+}
+
+String _foldLanguageSwitchModeLabel(_FoldLanguageSwitchMode mode) {
+  switch (mode) {
+    case _FoldLanguageSwitchMode.macLanguageCycle:
+      return translate('Mac Language Switching');
+    case _FoldLanguageSwitchMode.windowsLanguageCycle:
+      return translate('Windows Language Switching');
+    case _FoldLanguageSwitchMode.linuxLanguageCycle:
+      return translate('Linux Language Switching');
+  }
+}
+
+String _foldLanguageShortcutOptionKey(_FoldLanguageShortcutSlot slot) {
+  switch (slot) {
+    case _FoldLanguageShortcutSlot.macPrev:
+      return 'fold.macPrevLanguageShortcut';
+    case _FoldLanguageShortcutSlot.macNext:
+      return 'fold.macNextLanguageShortcut';
+    case _FoldLanguageShortcutSlot.winPrev:
+      return 'fold.winPrevLanguageShortcut';
+    case _FoldLanguageShortcutSlot.winNext:
+      return 'fold.winNextLanguageShortcut';
+    case _FoldLanguageShortcutSlot.linuxPrev:
+      return 'fold.linuxPrevLanguageShortcut';
+    case _FoldLanguageShortcutSlot.linuxNext:
+      return 'fold.linuxNextLanguageShortcut';
+  }
+}
+
+String _foldLanguageShortcutTitle(_FoldLanguageShortcutSlot slot) {
+  switch (slot) {
+    case _FoldLanguageShortcutSlot.macPrev:
+      return translate('Set Previous Input Source Shortcut');
+    case _FoldLanguageShortcutSlot.macNext:
+      return translate('Set Next Input Menu Shortcut');
+    case _FoldLanguageShortcutSlot.winPrev:
+    case _FoldLanguageShortcutSlot.linuxPrev:
+      return translate('Set Previous Language Shortcut');
+    case _FoldLanguageShortcutSlot.winNext:
+    case _FoldLanguageShortcutSlot.linuxNext:
+      return translate('Set Next Language Shortcut');
+  }
+}
+
+String _foldPreviousLanguageButtonLabel(_FoldLanguageSwitchMode mode) {
+  return mode == _FoldLanguageSwitchMode.macLanguageCycle
+      ? translate('Previous Input Source')
+      : translate('Prev Lang');
+}
+
+String _foldPreviousLanguageTooltip(_FoldLanguageSwitchMode mode) {
+  return mode == _FoldLanguageSwitchMode.macLanguageCycle
+      ? translate('Previous Input Source')
+      : translate('Previous Language');
+}
+
+String _foldNextLanguageButtonLabel(_FoldLanguageSwitchMode mode) {
+  return mode == _FoldLanguageSwitchMode.macLanguageCycle
+      ? translate('Next in Input Menu')
+      : translate('Next Lang');
+}
+
+String _foldNextLanguageTooltip(_FoldLanguageSwitchMode mode) {
+  return mode == _FoldLanguageSwitchMode.macLanguageCycle
+      ? translate('Next in Input Menu')
+      : translate('Next Language');
+}
+
+List<_FoldLanguageShortcutSlot> _foldLanguageShortcutSlotsForMode(
+    _FoldLanguageSwitchMode mode) {
+  switch (mode) {
+    case _FoldLanguageSwitchMode.macLanguageCycle:
+      return const [
+        _FoldLanguageShortcutSlot.macPrev,
+        _FoldLanguageShortcutSlot.macNext,
+      ];
+    case _FoldLanguageSwitchMode.windowsLanguageCycle:
+      return const [
+        _FoldLanguageShortcutSlot.winPrev,
+        _FoldLanguageShortcutSlot.winNext,
+      ];
+    case _FoldLanguageSwitchMode.linuxLanguageCycle:
+      return const [
+        _FoldLanguageShortcutSlot.linuxPrev,
+        _FoldLanguageShortcutSlot.linuxNext,
+      ];
+  }
+}
+
+String _foldModifierDisplayStyleValue(_FoldModifierDisplayStyle style) {
+  switch (style) {
+    case _FoldModifierDisplayStyle.mac:
+      return 'mac';
+    case _FoldModifierDisplayStyle.win:
+      return 'win';
+    case _FoldModifierDisplayStyle.linux:
+      return 'linux';
+  }
+}
+
+_FoldModifierDisplayStyle? _foldModifierDisplayStyleFromValue(String value) {
+  for (final style in _FoldModifierDisplayStyle.values) {
+    if (_foldModifierDisplayStyleValue(style) == value) {
+      return style;
+    }
+  }
+  return null;
+}
+
+_FoldModifierDisplayStyle _foldInferredModifierDisplayStyle(
+    _FoldLanguageSwitchMode mode) {
+  switch (mode) {
+    case _FoldLanguageSwitchMode.macLanguageCycle:
+      return _FoldModifierDisplayStyle.mac;
+    case _FoldLanguageSwitchMode.windowsLanguageCycle:
+      return _FoldModifierDisplayStyle.win;
+    case _FoldLanguageSwitchMode.linuxLanguageCycle:
+      return _FoldModifierDisplayStyle.linux;
+  }
+}
+
+String _foldModifierDisplayStyleLabel(_FoldModifierDisplayStyle style) {
+  switch (style) {
+    case _FoldModifierDisplayStyle.mac:
+      return translate('Mac modifier labels');
+    case _FoldModifierDisplayStyle.win:
+      return translate('Windows modifier labels');
+    case _FoldModifierDisplayStyle.linux:
+      return translate('Linux modifier labels');
+  }
+}
+
+String _foldKeyboardInputModeValue(_FoldKeyboardInputMode mode) {
+  switch (mode) {
+    case _FoldKeyboardInputMode.textInjection:
+      return 'textInjection';
+    case _FoldKeyboardInputMode.remoteImeKeyEvents:
+      return 'remoteImeKeyEvents';
+  }
+}
+
+_FoldKeyboardInputMode _foldKeyboardInputModeFromValue(String value) {
+  for (final mode in _FoldKeyboardInputMode.values) {
+    if (_foldKeyboardInputModeValue(mode) == value) {
+      return mode;
+    }
+  }
+  return _FoldKeyboardInputMode.remoteImeKeyEvents;
+}
+
+String _foldShortcutKeyLabel(
+    String key, _FoldModifierDisplayStyle modifierDisplayStyle) {
+  final labels = _foldModifierLabels(modifierDisplayStyle);
+  switch (key) {
+    case 'VK_SPACE':
+      return translate('Space');
+    case 'VK_SHIFT':
+      return translate('Shift');
+    case 'VK_CONTROL':
+      return labels.control;
+    case 'VK_MENU':
+      return labels.alt;
+    case 'Meta':
+      return labels.meta;
+    case 'VK_ESCAPE':
+      return translate('Esc');
+    case 'VK_TAB':
+      return translate('Tab');
+    case 'VK_BACK':
+      return translate('Backspace');
+    case 'VK_ENTER':
+      return translate('Enter');
+    default:
+      if (key.startsWith('VK_') && key.length == 4) {
+        return key.substring(3);
+      }
+      return key;
+  }
+}
 
 // Workaround for Android (default input method, Microsoft SwiftKey keyboard) when using physical keyboard.
 // When connecting a physical keyboard, `KeyEvent.physicalKey.usbHidUsage` are wrong is using Microsoft SwiftKey keyboard.
@@ -60,6 +547,13 @@ class RemotePage extends StatefulWidget {
 }
 
 class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
+  static const double _foldDefaultRemotePaneRatio = 0.5;
+  static const double _foldMinPaneRatio = 0.35;
+  static const double _foldMaxPaneRatio = 0.65;
+  static const double _foldResizeHitExtent = 28.0;
+  static const double _foldTouchpadPaneRatio = 0.35;
+  static const double _foldToolsBarHeight = 48.0;
+
   Timer? _timer;
   bool _showBar = !isWebDesktop;
   bool _showGestureHelp = false;
@@ -75,7 +569,28 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
-  var _showLocalKeyboardPane = true;
+  var _foldRemoteDisplayMode = _FoldRemoteDisplayMode.contain;
+  var _foldTrackpadPlacement = _TrackpadPlacement.left;
+  var _foldLanguageSwitchMode = _FoldLanguageSwitchMode.macLanguageCycle;
+  _FoldModifierDisplayStyle? _foldModifierDisplayStyleOverride;
+  final Map<_FoldLanguageShortcutSlot, _FoldKeyShortcut>
+      _foldLanguageShortcuts = Map.of(_kDefaultFoldLanguageShortcuts);
+  _FoldShortcutCaptureTarget? _foldShortcutCaptureTarget;
+  _FoldKeyShortcut? _foldShortcutCaptureValue;
+  bool _isFoldLanguageSettingsOpen = false;
+  bool _preserveFoldShortcutCaptureOnSettingsClose = false;
+  void Function(VoidCallback fn)? _foldLanguageSettingsSetState;
+  var _foldInputRevision = 0;
+  var _foldKeyboardInputMode = _FoldKeyboardInputMode.remoteImeKeyEvents;
+  var _fitRemoteResolutionToFoldPane = false;
+  var _foldRemotePaneRatio = _foldDefaultRemotePaneRatio;
+  double? _foldResizePreviewRemotePaneRatio;
+  Future<void> _foldRemoteImeKeyQueue = Future<void>.value();
+  final Set<int> _foldRemoteImePressedHids = <int>{};
+  Size? _lastFoldRemoteViewportSize;
+  CanvasViewportFit? _lastFoldViewportFit;
+  Size? _lastRequestedFoldResolution;
+  bool _foldViewportOverrideActive = false;
 
   Worker? _waylandKeyboardGateWorker;
   bool _waylandKeyboardGateInitialized = false;
@@ -85,8 +600,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   final TextEditingController _textController =
       TextEditingController(text: initText);
-  final TextEditingController _localKeyboardTextController =
-      TextEditingController();
 
   _RemotePageState(String id) {
     initSharedStates(id);
@@ -97,6 +610,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _loadFoldLanguageSwitchSettings();
+    _loadFoldPaneSettings();
     gFFI.ffiModel.updateEventListener(sessionId, widget.id);
     gFFI.start(
       widget.id,
@@ -164,7 +679,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     await gFFI.invokeMethod("enable_soft_keyboard", true);
     _mobileFocusNode.dispose();
     _physicalFocusNode.dispose();
-    _localKeyboardTextController.dispose();
+    gFFI.canvasModel.clearViewportOverride();
     clearWaylandKeyboardPromptSuppressedForConnection(sessionId.toString());
     _waylandKeyboardGateWorker?.dispose();
     inputModel.keyboardInputAllowed = true;
@@ -446,6 +961,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final useFoldInputPane = _shouldUseFoldableSplitKeyboard(context);
     final keyboardIsVisible =
         keyboardVisibilityController.isVisible && _showEdit;
     final showActionButton = !_showBar || keyboardIsVisible || _showGestureHelp;
@@ -460,7 +976,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           floatingActionButtonLocation: keyboardIsVisible
               ? FABLocation(FloatingActionButtonLocation.endFloat, 0, -35)
               : null,
-          floatingActionButton: !showActionButton
+          floatingActionButton: useFoldInputPane || !showActionButton
               ? null
               : FloatingActionButton(
                   mini: !keyboardIsVisible,
@@ -485,22 +1001,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                       }
                     });
                   }),
-          bottomNavigationBar: Obx(() => Stack(
-                alignment: Alignment.bottomCenter,
-                children: [
-                  gFFI.ffiModel.pi.isSet.isTrue &&
-                          gFFI.ffiModel.waitForFirstImage.isTrue
-                      ? emptyOverlay(MyTheme.canvasColor)
-                      : () {
-                          gFFI.ffiModel.tryShowAndroidActionsOverlay();
-                          return Offstage();
-                        }(),
-                  _bottomWidget(),
-                  gFFI.ffiModel.pi.isSet.isFalse
-                      ? emptyOverlay(MyTheme.canvasColor)
-                      : Offstage(),
-                ],
-              )),
+          bottomNavigationBar: _buildBottomNavigationBar(),
           body: Obx(
             () => getRawPointerAndKeyBody(Overlay(
               initialEntries: [
@@ -534,6 +1035,28 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildBottomNavigationBar() {
+    if (_shouldUseFoldableSplitKeyboard(context)) {
+      return const SizedBox.shrink();
+    }
+    return Obx(() => Stack(
+          alignment: Alignment.bottomCenter,
+          children: [
+            gFFI.ffiModel.pi.isSet.isTrue &&
+                    gFFI.ffiModel.waitForFirstImage.isTrue
+                ? emptyOverlay(MyTheme.canvasColor)
+                : () {
+                    gFFI.ffiModel.tryShowAndroidActionsOverlay();
+                    return Offstage();
+                  }(),
+            _bottomWidget(),
+            gFFI.ffiModel.pi.isSet.isFalse
+                ? emptyOverlay(MyTheme.canvasColor)
+                : Offstage(),
+          ],
+        ));
+  }
+
   Widget getRawPointerAndKeyBody(Widget child) {
     final ffiModel = Provider.of<FfiModel>(context);
     return RawPointerMouseRegion(
@@ -550,103 +1073,113 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget getBottomAppBar() {
+  Widget getBottomAppBar({bool compactForFoldInput = false}) {
     final ffiModel = Provider.of<FfiModel>(context);
     final useSplitKeyboard = _shouldUseFoldableSplitKeyboard(context);
     IconButton keyboardButton() => IconButton(
-        color: Colors.white,
-        icon: Icon(useSplitKeyboard && _showLocalKeyboardPane
-            ? Icons.keyboard_hide
-            : Icons.keyboard),
-        onPressed: useSplitKeyboard ? _toggleLocalKeyboardPane : openKeyboard);
+          color: Colors.white,
+          icon: const Icon(Icons.keyboard),
+          onPressed: useSplitKeyboard ? null : openKeyboard,
+        );
+    final mainButtons = <Widget>[
+          IconButton(
+            color: Colors.white,
+            icon: Icon(Icons.clear),
+            onPressed: () {
+              clientClose(sessionId, gFFI);
+            },
+          ),
+          IconButton(
+            color: Colors.white,
+            icon: Icon(Icons.tv),
+            onPressed: () {
+              setState(() => _showEdit = false);
+              showOptions(context, widget.id, gFFI.dialogManager);
+            },
+          )
+        ] +
+        (isWebDesktop || ffiModel.viewOnly || !ffiModel.keyboard
+            ? []
+            : gFFI.ffiModel.isPeerAndroid
+                ? [
+                    if (!useSplitKeyboard) keyboardButton(),
+                    IconButton(
+                      color: Colors.white,
+                      icon: const Icon(Icons.build),
+                      onPressed: () => gFFI.dialogManager
+                          .toggleMobileActionsOverlay(ffi: gFFI),
+                    )
+                  ]
+                : [
+                    if (!useSplitKeyboard) keyboardButton(),
+                    IconButton(
+                      color: Colors.white,
+                      icon: Icon(gFFI.ffiModel.touchMode
+                          ? Icons.touch_app
+                          : Icons.mouse),
+                      onPressed: () =>
+                          setState(() => _showGestureHelp = !_showGestureHelp),
+                    ),
+                  ]) +
+        (isWeb
+            ? []
+            : <Widget>[
+                futureBuilder(
+                    future: gFFI.invokeMethod(
+                        "get_value", "KEY_IS_SUPPORT_VOICE_CALL"),
+                    hasData: (isSupportVoiceCall) => IconButton(
+                          color: Colors.white,
+                          icon: isAndroid && isSupportVoiceCall
+                              ? SvgPicture.asset('assets/chat.svg',
+                                  colorFilter: ColorFilter.mode(
+                                      Colors.white, BlendMode.srcIn))
+                              : Icon(Icons.message),
+                          onPressed: () => isAndroid && isSupportVoiceCall
+                              ? showChatOptions(widget.id)
+                              : onPressedTextChat(widget.id),
+                        ))
+              ]) +
+        [
+          IconButton(
+            color: Colors.white,
+            icon: Icon(Icons.more_vert),
+            onPressed: () {
+              setState(() => _showEdit = false);
+              showActions(widget.id);
+            },
+          ),
+        ];
+    final collapseButton = Obx(() => IconButton(
+          color: Colors.white,
+          icon: Icon(Icons.expand_more),
+          onPressed: gFFI.ffiModel.waitForFirstImage.isTrue
+              ? null
+              : () {
+                  setState(() => _showBar = !_showBar);
+                },
+        ));
+    final child = compactForFoldInput
+        ? SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: mainButtons + [collapseButton],
+            ),
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.max,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: <Widget>[
+              Row(children: mainButtons),
+              collapseButton,
+            ],
+          );
     return BottomAppBar(
+      height: compactForFoldInput ? _foldToolsBarHeight : null,
+      padding: compactForFoldInput ? EdgeInsets.zero : null,
       elevation: 10,
       color: MyTheme.accent,
-      child: Row(
-        mainAxisSize: MainAxisSize.max,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: <Widget>[
-          Row(
-              children: <Widget>[
-                    IconButton(
-                      color: Colors.white,
-                      icon: Icon(Icons.clear),
-                      onPressed: () {
-                        clientClose(sessionId, gFFI);
-                      },
-                    ),
-                    IconButton(
-                      color: Colors.white,
-                      icon: Icon(Icons.tv),
-                      onPressed: () {
-                        setState(() => _showEdit = false);
-                        showOptions(context, widget.id, gFFI.dialogManager);
-                      },
-                    )
-                  ] +
-                  (isWebDesktop || ffiModel.viewOnly || !ffiModel.keyboard
-                      ? []
-                      : gFFI.ffiModel.isPeerAndroid
-                          ? [
-                              keyboardButton(),
-                              IconButton(
-                                color: Colors.white,
-                                icon: const Icon(Icons.build),
-                                onPressed: () => gFFI.dialogManager
-                                    .toggleMobileActionsOverlay(ffi: gFFI),
-                              )
-                            ]
-                          : [
-                              keyboardButton(),
-                              IconButton(
-                                color: Colors.white,
-                                icon: Icon(gFFI.ffiModel.touchMode
-                                    ? Icons.touch_app
-                                    : Icons.mouse),
-                                onPressed: () => setState(
-                                    () => _showGestureHelp = !_showGestureHelp),
-                              ),
-                            ]) +
-                  (isWeb
-                      ? []
-                      : <Widget>[
-                          futureBuilder(
-                              future: gFFI.invokeMethod(
-                                  "get_value", "KEY_IS_SUPPORT_VOICE_CALL"),
-                              hasData: (isSupportVoiceCall) => IconButton(
-                                    color: Colors.white,
-                                    icon: isAndroid && isSupportVoiceCall
-                                        ? SvgPicture.asset('assets/chat.svg',
-                                            colorFilter: ColorFilter.mode(
-                                                Colors.white, BlendMode.srcIn))
-                                        : Icon(Icons.message),
-                                    onPressed: () =>
-                                        isAndroid && isSupportVoiceCall
-                                            ? showChatOptions(widget.id)
-                                            : onPressedTextChat(widget.id),
-                                  ))
-                        ]) +
-                  [
-                    IconButton(
-                      color: Colors.white,
-                      icon: Icon(Icons.more_vert),
-                      onPressed: () {
-                        setState(() => _showEdit = false);
-                        showActions(widget.id);
-                      },
-                    ),
-                  ]),
-          Obx(() => IconButton(
-                color: Colors.white,
-                icon: Icon(Icons.expand_more),
-                onPressed: gFFI.ffiModel.waitForFirstImage.isTrue
-                    ? null
-                    : () {
-                        setState(() => _showBar = !_showBar);
-                      },
-              )),
-        ],
-      ),
+      child: child,
     );
   }
 
@@ -670,20 +1203,170 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     return size.shortestSide >= 600 || size.width >= 700 || hasFoldOrHinge;
   }
 
-  bool _preferColumnSplitKeyboard(BuildContext context) {
+  Axis _foldPaneSplitAxis(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
+    final size = mediaQuery.size;
+    if (mediaQuery.orientation == Orientation.portrait ||
+        size.height > size.width) {
+      return Axis.vertical;
+    }
+
     for (final feature in mediaQuery.displayFeatures) {
       if (!_isFoldableDisplayFeature(feature)) {
         continue;
       }
       if (feature.bounds.width > feature.bounds.height) {
-        return true;
+        return Axis.vertical;
       }
       if (feature.bounds.height > feature.bounds.width) {
-        return false;
+        return Axis.horizontal;
       }
     }
-    return mediaQuery.size.width >= mediaQuery.size.height;
+    return Axis.horizontal;
+  }
+
+  double _clampFoldRemotePaneRatio(double ratio) =>
+      ratio.clamp(_foldMinPaneRatio, _foldMaxPaneRatio).toDouble();
+
+  CanvasViewportFit _foldViewportFit() {
+    switch (_foldRemoteDisplayMode) {
+      case _FoldRemoteDisplayMode.fill:
+        return CanvasViewportFit.cover;
+      case _FoldRemoteDisplayMode.contain:
+      case _FoldRemoteDisplayMode.panZoom:
+        return CanvasViewportFit.contain;
+    }
+  }
+
+  String _foldDisplayModeLabel(_FoldRemoteDisplayMode mode) {
+    switch (mode) {
+      case _FoldRemoteDisplayMode.contain:
+        return translate('Contain');
+      case _FoldRemoteDisplayMode.fill:
+        return translate('Fill');
+      case _FoldRemoteDisplayMode.panZoom:
+        return translate('Pan/Zoom');
+    }
+  }
+
+  IconData _foldDisplayModeIcon(_FoldRemoteDisplayMode mode) {
+    switch (mode) {
+      case _FoldRemoteDisplayMode.contain:
+        return Icons.fit_screen;
+      case _FoldRemoteDisplayMode.fill:
+        return Icons.fullscreen;
+      case _FoldRemoteDisplayMode.panZoom:
+        return Icons.open_with;
+    }
+  }
+
+  Size _normalizeFoldViewportSize(Size size) {
+    return Size(
+      size.width.isFinite
+          ? size.width.clamp(0.0, double.infinity).toDouble()
+          : 0.0,
+      size.height.isFinite
+          ? size.height.clamp(0.0, double.infinity).toDouble()
+          : 0.0,
+    );
+  }
+
+  void _syncFoldCanvasViewport(Size viewportSize) {
+    final normalizedSize = _normalizeFoldViewportSize(viewportSize);
+    final fit = _foldViewportFit();
+    _scheduleFoldRemoteResolution(normalizedSize);
+    if (_foldViewportOverrideActive &&
+        _lastFoldRemoteViewportSize == normalizedSize &&
+        _lastFoldViewportFit == fit) {
+      return;
+    }
+
+    _foldViewportOverrideActive = true;
+    _lastFoldRemoteViewportSize = normalizedSize;
+    _lastFoldViewportFit = fit;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_foldViewportOverrideActive ||
+          _lastFoldRemoteViewportSize != normalizedSize ||
+          _lastFoldViewportFit != fit) {
+        return;
+      }
+      final changed =
+          gFFI.canvasModel.setViewportOverride(normalizedSize, fit: fit);
+      if (changed) {
+        unawaited(gFFI.canvasModel.updateViewStyle());
+      }
+    });
+  }
+
+  void _clearFoldCanvasViewport() {
+    if (!_foldViewportOverrideActive &&
+        _lastFoldRemoteViewportSize == null &&
+        _lastFoldViewportFit == null) {
+      return;
+    }
+    _foldViewportOverrideActive = false;
+    _lastFoldRemoteViewportSize = null;
+    _lastFoldViewportFit = null;
+    _lastRequestedFoldResolution = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _foldViewportOverrideActive) {
+        return;
+      }
+      if (gFFI.canvasModel.clearViewportOverride()) {
+        unawaited(gFFI.canvasModel.updateViewStyle());
+      }
+    });
+  }
+
+  bool get _canFitRemoteResolutionToFoldPane {
+    final pi = gFFI.ffiModel.pi;
+    return gFFI.ffiModel.keyboard &&
+        gFFI.ffiModel.isVirtualDisplayResolution &&
+        pi.currentDisplay != kAllDisplayValue;
+  }
+
+  void _toggleFitRemoteResolutionToFoldPane() {
+    if (!_canFitRemoteResolutionToFoldPane) {
+      return;
+    }
+    setState(() {
+      _fitRemoteResolutionToFoldPane = !_fitRemoteResolutionToFoldPane;
+      _lastRequestedFoldResolution = null;
+    });
+  }
+
+  void _scheduleFoldRemoteResolution(Size viewportSize) {
+    if (!_fitRemoteResolutionToFoldPane || !_canFitRemoteResolutionToFoldPane) {
+      return;
+    }
+
+    final width = viewportSize.width.round().clamp(320, 8192).toInt();
+    final height = viewportSize.height.round().clamp(240, 8192).toInt();
+    final requested = Size(width.toDouble(), height.toDouble());
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_fitRemoteResolutionToFoldPane ||
+          !_canFitRemoteResolutionToFoldPane ||
+          _lastRequestedFoldResolution == requested) {
+        return;
+      }
+      final rect = gFFI.ffiModel.rect;
+      if (rect != null &&
+          rect.width.round() == width &&
+          rect.height.round() == height) {
+        _lastRequestedFoldResolution = requested;
+        return;
+      }
+      _lastRequestedFoldResolution = requested;
+      unawaited(bind.sessionChangeResolution(
+        sessionId: sessionId,
+        display: gFFI.ffiModel.pi.currentDisplay,
+        width: width,
+        height: height,
+      ));
+    });
   }
 
   void _disableRemoteSoftKeyboardForSplitMode() {
@@ -703,17 +1386,571 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     });
   }
 
-  void _toggleLocalKeyboardPane() {
-    setState(() {
-      _showLocalKeyboardPane = !_showLocalKeyboardPane;
-      _showEdit = false;
-    });
-    _timer?.cancel();
-    gFFI.invokeMethod("enable_soft_keyboard", false);
-    _mobileFocusNode.unfocus();
-    if (!_showLocalKeyboardPane) {
-      FocusManager.instance.primaryFocus?.unfocus();
+  void _loadFoldLanguageSwitchSettings() {
+    final storedLanguageMode =
+        bind.mainGetLocalOption(key: _kFoldLanguageSwitchModeOption);
+    _foldLanguageSwitchMode =
+        _foldLanguageSwitchModeFromValue(storedLanguageMode);
+    if (storedLanguageMode == 'macGlobal') {
+      unawaited(bind.mainSetLocalOption(
+        key: _kFoldLanguageSwitchModeOption,
+        value: _foldLanguageSwitchModeValue(_foldLanguageSwitchMode),
+      ));
     }
+    _foldModifierDisplayStyleOverride = _foldModifierDisplayStyleFromValue(
+        bind.mainGetLocalOption(key: _kFoldModifierDisplayStyleOption));
+    for (final slot in _FoldLanguageShortcutSlot.values) {
+      final fallback = _kDefaultFoldLanguageShortcuts[slot]!;
+      _foldLanguageShortcuts[slot] = _FoldKeyShortcut.fromOptionValue(
+        bind.mainGetLocalOption(key: _foldLanguageShortcutOptionKey(slot)),
+        fallback,
+      );
+    }
+  }
+
+  void _loadFoldPaneSettings() {
+    final ratio = double.tryParse(
+        bind.mainGetLocalOption(key: _kFoldRemotePaneRatioOption));
+    if (ratio != null) {
+      _foldRemotePaneRatio = _clampFoldRemotePaneRatio(ratio);
+    }
+    _foldKeyboardInputMode = _foldKeyboardInputModeFromValue(
+        bind.mainGetLocalOption(key: _kFoldKeyboardInputModeOption));
+  }
+
+  _FoldModifierDisplayStyle get _foldModifierDisplayStyle =>
+      _foldModifierDisplayStyleOverride ??
+      _foldInferredModifierDisplayStyle(_foldLanguageSwitchMode);
+
+  _FoldKeyShortcut _foldLanguageShortcut(_FoldLanguageShortcutSlot slot) =>
+      _foldLanguageShortcuts[slot] ?? _kDefaultFoldLanguageShortcuts[slot]!;
+
+  void _setFoldLanguageSwitchMode(_FoldLanguageSwitchMode mode) {
+    setState(() => _foldLanguageSwitchMode = mode);
+    unawaited(bind.mainSetLocalOption(
+      key: _kFoldLanguageSwitchModeOption,
+      value: _foldLanguageSwitchModeValue(mode),
+    ));
+  }
+
+  void _setFoldModifierDisplayStyle(_FoldModifierDisplayStyle style) {
+    setState(() => _foldModifierDisplayStyleOverride = style);
+    unawaited(bind.mainSetLocalOption(
+      key: _kFoldModifierDisplayStyleOption,
+      value: _foldModifierDisplayStyleValue(style),
+    ));
+    _refreshFoldLanguageSettings();
+  }
+
+  void _setFoldLanguageShortcut(
+    _FoldLanguageShortcutSlot slot,
+    _FoldKeyShortcut shortcut,
+  ) {
+    setState(() => _foldLanguageShortcuts[slot] = shortcut);
+    unawaited(bind.mainSetLocalOption(
+      key: _foldLanguageShortcutOptionKey(slot),
+      value: shortcut.toOptionValue(),
+    ));
+  }
+
+  void _setFoldKeyboardInputMode(_FoldKeyboardInputMode mode) {
+    setState(() => _foldKeyboardInputMode = mode);
+    unawaited(bind.mainSetLocalOption(
+      key: _kFoldKeyboardInputModeOption,
+      value: _foldKeyboardInputModeValue(mode),
+    ));
+    if (mode == _FoldKeyboardInputMode.remoteImeKeyEvents) {
+      unawaited(_ensureFoldRemoteImeKeyboardMode());
+    }
+  }
+
+  void _notifyFoldInputStateChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(() => _foldInputRevision++);
+    _refreshFoldLanguageSettings();
+  }
+
+  void _sendFoldLanguageShortcut(_FoldKeyShortcut shortcut) {
+    _withLocalKeyboardInput(() {
+      unawaited(_queueFoldRemoteImeAction(
+        () => _sendFoldShortcutSafely(shortcut, reason: 'language shortcut'),
+      ));
+    });
+  }
+
+  Future<bool> _ensureFoldRemoteImeKeyboardMode() async {
+    final mapSupported = bind.sessionIsKeyboardModeSupported(
+        sessionId: sessionId, mode: kKeyMapMode);
+    if (!mapSupported) {
+      if (kDebugMode) {
+        debugPrint(
+          'fold remote ime: map keyboard mode is not supported; '
+          'falling back to sessionInputKey',
+        );
+      }
+      return false;
+    }
+    final current = await bind.sessionGetKeyboardMode(sessionId: sessionId);
+    if (current != kKeyMapMode) {
+      await bind.sessionSetKeyboardMode(
+          sessionId: sessionId, value: kKeyMapMode);
+      await inputModel.updateKeyboardMode();
+    }
+    return true;
+  }
+
+  Future<void> _queueFoldRemoteImeAction(Future<void> Function() action) {
+    final previous =
+        _foldRemoteImeKeyQueue.catchError((Object e, StackTrace s) {
+      if (kDebugMode) {
+        debugPrint('fold remote ime: previous key action failed: $e');
+      }
+    });
+    final next = previous.then((_) => action());
+    _foldRemoteImeKeyQueue = next.catchError((Object e, StackTrace s) {
+      if (kDebugMode) {
+        debugPrint('fold remote ime: queued key action failed: $e');
+      }
+    });
+    return next;
+  }
+
+  List<int> _foldActiveRemoteImeModifierHids({
+    required bool ctrl,
+    required bool alt,
+    required bool shift,
+    required bool command,
+  }) {
+    final mac = _foldModifierDisplayStyle == _FoldModifierDisplayStyle.mac;
+    final modifiers = <int>[
+      if (shift) 0xE1,
+      if (ctrl) 0xE0,
+    ];
+    if (mac) {
+      modifiers.addAll([
+        if (alt) 0xE2,
+        if (command) 0xE3,
+      ]);
+    } else {
+      modifiers.addAll([
+        if (command) 0xE3,
+        if (alt) 0xE2,
+      ]);
+    }
+    return modifiers;
+  }
+
+  Future<void> _sendFoldRemoteImeHid(int usbHid, bool down) async {
+    if (down) {
+      _foldRemoteImePressedHids.add(usbHid);
+    }
+    try {
+      await bind.sessionHandleFlutterKeyEvent(
+        sessionId: sessionId,
+        character: '',
+        usbHid: usbHid,
+        lockModes: 0,
+        downOrUp: down,
+      );
+    } finally {
+      if (!down) {
+        _foldRemoteImePressedHids.remove(usbHid);
+      }
+    }
+  }
+
+  Future<void> _releaseFoldRemoteImePressedHids(String reason) async {
+    final pressed = _foldRemoteImePressedHids.toList(growable: false);
+    for (final usbHid in pressed.reversed) {
+      try {
+        await bind.sessionHandleFlutterKeyEvent(
+          sessionId: sessionId,
+          character: '',
+          usbHid: usbHid,
+          lockModes: 0,
+          downOrUp: false,
+        );
+      } finally {
+        _foldRemoteImePressedHids.remove(usbHid);
+      }
+    }
+    if (kDebugMode) {
+      debugPrint(
+        'fold remote ime: release after $reason, '
+        'pressedSetEmpty=${_foldRemoteImePressedHids.isEmpty}',
+      );
+    }
+  }
+
+  void _clearFoldModifierTogglesAndShortcutCapture() {
+    if (!mounted) {
+      inputModel.resetModifiers();
+      _foldShortcutCaptureTarget = null;
+      _foldShortcutCaptureValue = null;
+      return;
+    }
+    setState(() {
+      inputModel.resetModifiers();
+      _foldShortcutCaptureTarget = null;
+      _foldShortcutCaptureValue = null;
+      _foldInputRevision++;
+    });
+    _refreshFoldLanguageSettings();
+  }
+
+  Future<void> _sendFoldRemoteImeKeySequence(
+    String keyName,
+    int usbHid, {
+    required bool ctrl,
+    required bool alt,
+    required bool shift,
+    required bool command,
+  }) async {
+    final mapModeReady = await _ensureFoldRemoteImeKeyboardMode();
+    if (kDebugMode) {
+      final mode = await bind.sessionGetKeyboardMode(sessionId: sessionId);
+      debugPrint(
+        'fold virtual keyboard: mode=Remote IME key events, '
+        'key=$keyName, usbHid=0x${usbHid.toRadixString(16)}, '
+        'keyboardMode=${mode ?? ''}, mapModeReady=$mapModeReady, '
+        'path=sessionHandleFlutterKeyEvent',
+      );
+    }
+    if (!mapModeReady) {
+      _sendFoldLegacyShortcutPress(_FoldKeyShortcut(
+        key: keyName,
+        ctrl: ctrl,
+        alt: alt,
+        shift: shift,
+        command: command,
+      ));
+      return;
+    }
+    final modifiers = _foldActiveRemoteImeModifierHids(
+      ctrl: ctrl,
+      alt: alt,
+      shift: shift,
+      command: command,
+    );
+    try {
+      for (final modifier in modifiers) {
+        await _sendFoldRemoteImeHid(modifier, true);
+      }
+      await _sendFoldRemoteImeHid(usbHid, true);
+      await _sendFoldRemoteImeHid(usbHid, false);
+      for (final modifier in modifiers.reversed) {
+        await _sendFoldRemoteImeHid(modifier, false);
+      }
+    } finally {
+      await _releaseFoldRemoteImePressedHids(keyName);
+    }
+  }
+
+  void _sendFoldLegacyShortcutPress(_FoldKeyShortcut shortcut) {
+    final oldCtrl = inputModel.ctrl;
+    final oldAlt = inputModel.alt;
+    final oldShift = inputModel.shift;
+    final oldCommand = inputModel.command;
+    inputModel.ctrl = shortcut.ctrl;
+    inputModel.alt = shortcut.alt;
+    inputModel.shift = shortcut.shift;
+    inputModel.command = shortcut.command;
+    try {
+      inputModel.inputKey(shortcut.key);
+    } finally {
+      inputModel.ctrl = oldCtrl;
+      inputModel.alt = oldAlt;
+      inputModel.shift = oldShift;
+      inputModel.command = oldCommand;
+    }
+  }
+
+  Future<void> _sendFoldShortcutSafely(
+    _FoldKeyShortcut shortcut, {
+    required String reason,
+  }) async {
+    if (kDebugMode) {
+      debugPrint(
+        'fold shortcut before $reason: key=${shortcut.key}, '
+        'shortcutModifiers='
+        'shift=${shortcut.shift}, ctrl=${shortcut.ctrl}, '
+        'alt=${shortcut.alt}, command=${shortcut.command}, '
+        'toolbarModifiers='
+        'shift=${inputModel.shift}, ctrl=${inputModel.ctrl}, '
+        'alt=${inputModel.alt}, command=${inputModel.command}',
+      );
+    }
+    try {
+      final remoteImeKey = _foldRemoteImeKeyEventForKeyName(shortcut.key);
+      if (remoteImeKey != null && await _ensureFoldRemoteImeKeyboardMode()) {
+        await _sendFoldRemoteImeKeySequence(
+          remoteImeKey.keyName,
+          remoteImeKey.usbHid,
+          ctrl: shortcut.ctrl,
+          alt: shortcut.alt,
+          shift: shortcut.shift,
+          command: shortcut.command,
+        );
+      } else {
+        _sendFoldLegacyShortcutPress(shortcut);
+      }
+    } finally {
+      await _releaseFoldRemoteImePressedHids(reason);
+      _clearFoldModifierTogglesAndShortcutCapture();
+      if (kDebugMode) {
+        debugPrint(
+          'fold shortcut after $reason: '
+          'pressedSetEmpty=${_foldRemoteImePressedHids.isEmpty}, '
+          'toolbarModifiers='
+          'shift=${inputModel.shift}, ctrl=${inputModel.ctrl}, '
+          'alt=${inputModel.alt}, command=${inputModel.command}',
+        );
+      }
+    }
+  }
+
+  _FoldLanguageShortcutSlot _foldShortcutSlotForTarget(
+    _FoldLanguageSwitchMode mode,
+    _FoldShortcutCaptureTarget target,
+  ) {
+    final slots = _foldLanguageShortcutSlotsForMode(mode);
+    return target == _FoldShortcutCaptureTarget.previous ? slots[0] : slots[1];
+  }
+
+  _FoldKeyShortcut _shortcutFromCurrentModifiers(String key) {
+    return _FoldKeyShortcut(
+      key: key,
+      ctrl: key == 'VK_CONTROL' ? false : inputModel.ctrl,
+      alt: key == 'VK_MENU' ? false : inputModel.alt,
+      shift: key == 'VK_SHIFT' ? false : inputModel.shift,
+      command: key == 'Meta' ? false : inputModel.command,
+    );
+  }
+
+  void _refreshFoldLanguageSettings() {
+    final refresh = _foldLanguageSettingsSetState;
+    if (refresh == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_isFoldLanguageSettingsOpen) {
+        refresh(() {});
+      }
+    });
+  }
+
+  void _captureFoldShortcutKey(String key) {
+    if (_foldShortcutCaptureTarget == null) {
+      return;
+    }
+    _foldShortcutCaptureValue = _shortcutFromCurrentModifiers(key);
+    _refreshFoldLanguageSettings();
+  }
+
+  void _startFoldShortcutCapture(_FoldShortcutCaptureTarget target) {
+    inputModel.resetModifiers();
+    _foldShortcutCaptureTarget = target;
+    _foldShortcutCaptureValue = null;
+    _notifyFoldInputStateChanged();
+  }
+
+  void _cancelFoldShortcutCapture() {
+    inputModel.resetModifiers();
+    _foldShortcutCaptureTarget = null;
+    _foldShortcutCaptureValue = null;
+    _notifyFoldInputStateChanged();
+  }
+
+  void _saveFoldShortcutCapture() {
+    final captureTarget = _foldShortcutCaptureTarget;
+    final captured = _foldShortcutCaptureValue;
+    if (captureTarget == null || captured == null) {
+      return;
+    }
+    final slot =
+        _foldShortcutSlotForTarget(_foldLanguageSwitchMode, captureTarget);
+    _setFoldLanguageShortcut(slot, captured);
+    inputModel.resetModifiers();
+    _foldShortcutCaptureTarget = null;
+    _foldShortcutCaptureValue = null;
+    _notifyFoldInputStateChanged();
+  }
+
+  void _closeFoldLanguageSettings() {
+    final preserveCapture = _preserveFoldShortcutCaptureOnSettingsClose;
+    _preserveFoldShortcutCaptureOnSettingsClose = false;
+    if (!preserveCapture) {
+      inputModel.resetModifiers();
+      _foldShortcutCaptureTarget = null;
+      _foldShortcutCaptureValue = null;
+    }
+    _isFoldLanguageSettingsOpen = false;
+    _foldLanguageSettingsSetState = null;
+    _notifyFoldInputStateChanged();
+  }
+
+  Widget _foldShortcutSettingsTile(
+    _FoldShortcutCaptureTarget target,
+    VoidCallback close,
+  ) {
+    final slot = _foldShortcutSlotForTarget(_foldLanguageSwitchMode, target);
+    final title = _foldLanguageShortcutTitle(slot);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      title: Text(title),
+      subtitle: Text(
+        _foldLanguageShortcut(slot).displayLabelFor(_foldModifierDisplayStyle),
+      ),
+      trailing: const Icon(Icons.keyboard),
+      selected: _foldShortcutCaptureTarget == target,
+      onTap: () {
+        _preserveFoldShortcutCaptureOnSettingsClose = true;
+        _startFoldShortcutCapture(target);
+        close();
+      },
+    );
+  }
+
+  Widget _foldModifierDisplayStyleTile(_FoldModifierDisplayStyle style) {
+    return RadioListTile<_FoldModifierDisplayStyle>(
+      contentPadding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      title: Text(_foldModifierDisplayStyleLabel(style)),
+      value: style,
+      groupValue: _foldModifierDisplayStyle,
+      onChanged: (value) {
+        if (value == null) {
+          return;
+        }
+        _setFoldModifierDisplayStyle(value);
+      },
+    );
+  }
+
+  Widget _foldKeyboardInputModeTile(
+    _FoldKeyboardInputMode mode,
+    void Function(VoidCallback fn) dialogSetState,
+  ) {
+    final title = mode == _FoldKeyboardInputMode.remoteImeKeyEvents
+        ? '${translate('Remote IME')} / ${translate('Key Events')}'
+        : translate('Text Injection');
+    return RadioListTile<_FoldKeyboardInputMode>(
+      contentPadding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      title: Text(title),
+      value: mode,
+      groupValue: _foldKeyboardInputMode,
+      onChanged: (value) {
+        if (value == null) {
+          return;
+        }
+        _setFoldKeyboardInputMode(value);
+        dialogSetState(() {});
+      },
+    );
+  }
+
+  void _showFoldLanguageSettings() {
+    if (_isFoldLanguageSettingsOpen) {
+      return;
+    }
+    _isFoldLanguageSettingsOpen = true;
+    gFFI.dialogManager.show((dialogSetState, close, context) {
+      _foldLanguageSettingsSetState = dialogSetState;
+      return CustomAlertDialog(
+        title: Text(translate('Keyboard System Switch')),
+        content: SizedBox(
+          width: 380,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final mode in _FoldLanguageSwitchMode.values)
+                  RadioListTile<_FoldLanguageSwitchMode>(
+                    contentPadding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    title: Text(_foldLanguageSwitchModeLabel(mode)),
+                    value: mode,
+                    groupValue: _foldLanguageSwitchMode,
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      _setFoldLanguageSwitchMode(value);
+                      _foldShortcutCaptureTarget = null;
+                      _foldShortcutCaptureValue = null;
+                      dialogSetState(() {});
+                    },
+                  ),
+                const Divider(color: MyTheme.border),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    translate('Input Mode'),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                for (final mode in _FoldKeyboardInputMode.values)
+                  _foldKeyboardInputModeTile(mode, dialogSetState),
+                const Divider(color: MyTheme.border),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    translate('Modifier Display Style'),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                for (final style in _FoldModifierDisplayStyle.values)
+                  _foldModifierDisplayStyleTile(style),
+                const Divider(color: MyTheme.border),
+                _foldShortcutSettingsTile(
+                    _FoldShortcutCaptureTarget.previous, close),
+                _foldShortcutSettingsTile(
+                    _FoldShortcutCaptureTarget.next, close),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+        clickMaskDismiss: true,
+        backDismiss: true).then((_) => _closeFoldLanguageSettings());
+  }
+
+  void _openFoldOfficialOptions() {
+    setState(() => _showEdit = false);
+    showOptions(context, widget.id, gFFI.dialogManager);
+  }
+
+  void _openFoldMoreActions() {
+    setState(() => _showEdit = false);
+    showActions(widget.id);
+  }
+
+  Future<void> _openFoldChat() async {
+    final isSupportVoiceCall = isAndroid &&
+        await gFFI.invokeMethod("get_value", "KEY_IS_SUPPORT_VOICE_CALL");
+    if (!mounted) {
+      return;
+    }
+    if (isSupportVoiceCall == true) {
+      showChatOptions(widget.id);
+    } else {
+      onPressedTextChat(widget.id);
+    }
+  }
+
+  void _toggleFoldTouchMode() {
+    if (gFFI.ffiModel.isPeerAndroid) {
+      return;
+    }
+    gFFI.ffiModel.toggleTouchMode();
+    final value = gFFI.ffiModel.touchMode ? 'Y' : 'N';
+    bind.mainSetLocalOption(key: kOptionTouchMode, value: value);
+    setState(() {});
   }
 
   void _withLocalKeyboardInput(VoidCallback action) {
@@ -744,28 +1981,171 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   void _inputLocalKeyboardChar(String char) {
-    _withLocalKeyboardInput(() => inputChar(char));
-  }
-
-  void _inputLocalKeyboardKey(String key) {
-    _withLocalKeyboardInput(() => inputModel.inputKey(key));
-  }
-
-  void _sendLocalKeyboardText(String text) {
-    if (text.isEmpty) {
-      return;
-    }
+    final ctrl = inputModel.ctrl;
+    final alt = inputModel.alt;
+    final shift = inputModel.shift;
+    final command = inputModel.command;
     _withLocalKeyboardInput(() {
-      bind.sessionInputString(sessionId: sessionId, value: text);
-      _localKeyboardTextController.clear();
+      final oldCtrl = inputModel.ctrl;
+      final oldAlt = inputModel.alt;
+      final oldShift = inputModel.shift;
+      final oldCommand = inputModel.command;
+      inputModel.ctrl = ctrl;
+      inputModel.alt = alt;
+      inputModel.shift = shift;
+      inputModel.command = command;
+      try {
+        if (kDebugMode) {
+          debugPrint(
+            'fold virtual keyboard: mode=Text Injection, '
+            'char=$char, path=inputChar/sessionInputKey',
+          );
+        }
+        inputChar(char);
+      } finally {
+        inputModel.ctrl = oldCtrl;
+        inputModel.alt = oldAlt;
+        inputModel.shift = oldShift;
+        inputModel.command = oldCommand;
+      }
     });
   }
 
-  double _localKeyboardPaneWidth(Size size) =>
-      (size.width * 0.36).clamp(300.0, 430.0).toDouble();
+  void _inputLocalKeyboardKey(String key) {
+    if (kDebugMode) {
+      debugPrint(
+        'fold virtual keyboard: mode=Key Events, '
+        'key=$key, path=sessionInputKey',
+      );
+    }
+    _withLocalKeyboardInput(() => inputModel.inputKey(key));
+  }
 
-  double _localKeyboardPaneHeight(Size size) =>
-      (size.height * 0.38).clamp(220.0, 320.0).toDouble();
+  void _inputLocalKeyboardRemoteImeKey(String keyName, int usbHid) {
+    final ctrl = inputModel.ctrl;
+    final alt = inputModel.alt;
+    final shift = inputModel.shift;
+    final command = inputModel.command;
+    _withLocalKeyboardInput(() {
+      unawaited(_queueFoldRemoteImeAction(
+        () => _sendFoldRemoteImeKeySequence(
+          keyName,
+          usbHid,
+          ctrl: ctrl,
+          alt: alt,
+          shift: shift,
+          command: command,
+        ),
+      ));
+    });
+  }
+
+  void _inputLocalKeyboardCombo(
+    String key, {
+    bool ctrl = false,
+    bool alt = false,
+    bool shift = false,
+    bool command = false,
+  }) {
+    _withLocalKeyboardInput(() {
+      unawaited(_queueFoldRemoteImeAction(
+        () => _sendFoldShortcutSafely(
+          _FoldKeyShortcut(
+            key: key,
+            ctrl: ctrl,
+            alt: alt,
+            shift: shift,
+            command: command,
+          ),
+          reason: 'combo',
+        ),
+      ));
+    });
+  }
+
+  void _toggleFoldTrackpadPlacement() {
+    setState(() {
+      _foldTrackpadPlacement = _foldTrackpadPlacement == _TrackpadPlacement.left
+          ? _TrackpadPlacement.right
+          : _TrackpadPlacement.left;
+    });
+  }
+
+  void _persistFoldRemotePaneRatio(double ratio) {
+    unawaited(bind.mainSetLocalOption(
+      key: _kFoldRemotePaneRatioOption,
+      value: ratio.toStringAsFixed(4),
+    ));
+  }
+
+  bool get _isFoldPaneResizeMode => _foldResizePreviewRemotePaneRatio != null;
+
+  String _foldPaneRatioLabel(double remoteRatio) {
+    final remotePercent = (remoteRatio * 100).round();
+    final inputPercent = 100 - remotePercent;
+    return '${translate('Remote Pane')} $remotePercent% / '
+        '${translate('Input Pane')} $inputPercent%';
+  }
+
+  void _toggleFoldPaneResizeMode() {
+    if (_isFoldPaneResizeMode) {
+      _cancelFoldPaneResize();
+      return;
+    }
+    _startFoldPaneResize();
+  }
+
+  void _startFoldPaneResize() {
+    setState(() {
+      _foldResizePreviewRemotePaneRatio = _foldRemotePaneRatio;
+    });
+  }
+
+  void _updateFoldPaneResize(
+    Axis splitAxis,
+    Size size,
+    DragUpdateDetails details,
+  ) {
+    final totalExtent = splitAxis == Axis.horizontal ? size.width : size.height;
+    if (totalExtent <= 0) {
+      return;
+    }
+    final delta =
+        splitAxis == Axis.horizontal ? details.delta.dx : details.delta.dy;
+    final current = _foldResizePreviewRemotePaneRatio ?? _foldRemotePaneRatio;
+    setState(() {
+      _foldResizePreviewRemotePaneRatio =
+          _clampFoldRemotePaneRatio(current + delta / totalExtent);
+    });
+  }
+
+  void _endFoldPaneResize() {
+    final previewRatio = _foldResizePreviewRemotePaneRatio;
+    if (previewRatio == null) {
+      return;
+    }
+    final nextRatio = _clampFoldRemotePaneRatio(previewRatio);
+    setState(() {
+      _foldRemotePaneRatio = nextRatio;
+      _foldResizePreviewRemotePaneRatio = null;
+    });
+    _persistFoldRemotePaneRatio(nextRatio);
+  }
+
+  void _cancelFoldPaneResize() {
+    if (_foldResizePreviewRemotePaneRatio == null) {
+      return;
+    }
+    setState(() {
+      _foldResizePreviewRemotePaneRatio = null;
+    });
+  }
+
+  Widget? _foldInputToolsBar() {
+    // Fold mode migrates the original blue bottom toolbar into the Input Pane
+    // toolbar, so no separate bottom tools bar is rendered here.
+    return null;
+  }
 
   Widget _buildBodyForMobileWithTouchRegion() {
     if (_shouldUseFoldableSplitKeyboard(context)) {
@@ -782,8 +2162,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     final keyboardIsVisible = keyboardVisibilityController.isVisible;
     if (useSplitKeyboard) {
       _disableRemoteSoftKeyboardForSplitMode();
+      gFFI.dialogManager.hideMobileActionsOverlay(store: false);
+      gFFI.cursorModel.keyHelpToolsVisibilityChanged(null, false);
       return _buildFoldableSplitKeyboardBody(context);
     }
+    _clearFoldCanvasViewport();
     return Container(
         color: MyTheme.canvasColor,
         child: _buildRemoteCanvasStack(
@@ -793,69 +2176,348 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   Widget _buildFoldableSplitKeyboardBody(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final remoteCanvas = RawTouchGestureDetectorRegion(
-      child: _buildRemoteCanvasStack(
-        includeHiddenTextInput: false,
-        keyboardIsVisible: false,
-      ),
+    final splitAxis = _foldPaneSplitAxis(context);
+    final canToggleTouchMode = !gFFI.ffiModel.isPeerAndroid &&
+        !gFFI.ffiModel.viewOnly &&
+        gFFI.ffiModel.keyboard;
+    final shortcutCaptureLabel = _foldShortcutCaptureTarget == null
+        ? null
+        : _foldLanguageShortcutTitle(_foldShortcutSlotForTarget(
+            _foldLanguageSwitchMode,
+            _foldShortcutCaptureTarget!,
+          ));
+    final shortcutCapturePreview =
+        _foldShortcutCaptureValue?.displayLabelFor(_foldModifierDisplayStyle) ??
+            translate('No shortcut selected');
+    final inputPane = _FoldInputPane(
+      splitAxis: splitAxis,
+      trackpadPlacement: _foldTrackpadPlacement,
+      touchpadRatio: _foldTouchpadPaneRatio,
       ffi: gFFI,
+      toolsBar: _foldInputToolsBar(),
+      inputRevision: _foldInputRevision,
+      displayMode: _foldRemoteDisplayMode,
+      fitRemoteResolutionEnabled:
+          _canFitRemoteResolutionToFoldPane && _fitRemoteResolutionToFoldPane,
+      canFitRemoteResolution: _canFitRemoteResolutionToFoldPane,
+      onToggleTrackpadPlacement: _toggleFoldTrackpadPlacement,
+      onModifierChanged: _notifyFoldInputStateChanged,
+      onDisplayModeSelected: (mode) {
+        setState(() => _foldRemoteDisplayMode = mode);
+      },
+      onToggleFitRemoteResolution: _toggleFitRemoteResolutionToFoldPane,
+      displayModeLabel: _foldDisplayModeLabel,
+      displayModeIcon: _foldDisplayModeIcon,
+      modifierDisplayStyle: _foldModifierDisplayStyle,
+      paneResizeMode: _isFoldPaneResizeMode,
+      paneRatioLabel: _foldPaneRatioLabel(
+        _foldResizePreviewRemotePaneRatio ?? _foldRemotePaneRatio,
+      ),
+      onTogglePaneResizeMode: _toggleFoldPaneResizeMode,
+      previousLanguageLabel:
+          _foldPreviousLanguageButtonLabel(_foldLanguageSwitchMode),
+      previousLanguageTooltip:
+          _foldPreviousLanguageTooltip(_foldLanguageSwitchMode),
+      nextLanguageLabel: _foldNextLanguageButtonLabel(_foldLanguageSwitchMode),
+      nextLanguageTooltip: _foldNextLanguageTooltip(_foldLanguageSwitchMode),
+      onPreviousLanguagePressed: () => _sendFoldLanguageShortcut(
+        _foldLanguageShortcut(_foldShortcutSlotForTarget(
+          _foldLanguageSwitchMode,
+          _FoldShortcutCaptureTarget.previous,
+        )),
+      ),
+      onNextLanguagePressed: () => _sendFoldLanguageShortcut(
+        _foldLanguageShortcut(_foldShortcutSlotForTarget(
+          _foldLanguageSwitchMode,
+          _FoldShortcutCaptureTarget.next,
+        )),
+      ),
+      onLanguageSettingsPressed: _showFoldLanguageSettings,
+      onOfficialOptionsPressed: _openFoldOfficialOptions,
+      onClosePressed: () => clientClose(sessionId, gFFI),
+      onMoreActionsPressed: _openFoldMoreActions,
+      onChatPressed: () => unawaited(_openFoldChat()),
+      onToggleTouchMode: _toggleFoldTouchMode,
+      canToggleTouchMode: canToggleTouchMode,
+      touchMode: gFFI.ffiModel.touchMode,
+      shortcutCaptureLabel: shortcutCaptureLabel,
+      shortcutCapturePreview: shortcutCapturePreview,
+      canSaveShortcutCapture: _foldShortcutCaptureValue != null,
+      onSaveShortcutCapture: _saveFoldShortcutCapture,
+      onCancelShortcutCapture: _cancelFoldShortcutCapture,
+      keyboard: _LocalRemoteKeyboard(
+        ffi: gFFI,
+        modifierDisplayStyle: _foldModifierDisplayStyle,
+        onCharacter: _inputLocalKeyboardChar,
+        onSpecialKey: _inputLocalKeyboardKey,
+        onRemoteImeKeyEvent: _inputLocalKeyboardRemoteImeKey,
+        onComboKey: _inputLocalKeyboardCombo,
+        onModifierChanged: _notifyFoldInputStateChanged,
+        isCapturingShortcut: _foldShortcutCaptureTarget != null,
+        onCaptureShortcutKey: _captureFoldShortcutKey,
+        remoteImeModeEnabled:
+            _foldKeyboardInputMode == _FoldKeyboardInputMode.remoteImeKeyEvents,
+      ),
     );
-    if (!_showLocalKeyboardPane) {
-      return Container(color: MyTheme.canvasColor, child: remoteCanvas);
-    }
-
-    final keyboardPane = LocalRemoteKeyboard(
-      textController: _localKeyboardTextController,
-      onCharacter: _inputLocalKeyboardChar,
-      onSpecialKey: _inputLocalKeyboardKey,
-      onSendText: _sendLocalKeyboardText,
-    );
-
-    if (_preferColumnSplitKeyboard(context)) {
-      return Container(
-        color: MyTheme.canvasColor,
-        child: Column(
+    return Container(
+      color: Colors.black,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final size = Size(
+          constraints.maxWidth.isFinite
+              ? constraints.maxWidth
+              : MediaQuery.of(context).size.width,
+          constraints.maxHeight.isFinite
+              ? constraints.maxHeight
+              : MediaQuery.of(context).size.height,
+        );
+        final activeRemoteRatio = _clampFoldRemotePaneRatio(
+            _foldResizePreviewRemotePaneRatio ?? _foldRemotePaneRatio);
+        final remoteRect = splitAxis == Axis.horizontal
+            ? Rect.fromLTWH(0, 0, size.width * activeRemoteRatio, size.height)
+            : Rect.fromLTWH(0, 0, size.width, size.height * activeRemoteRatio);
+        final inputRect = splitAxis == Axis.horizontal
+            ? Rect.fromLTWH(
+                remoteRect.right, 0, size.width - remoteRect.right, size.height)
+            : Rect.fromLTWH(0, remoteRect.bottom, size.width,
+                size.height - remoteRect.bottom);
+        return Stack(
           children: [
-            Expanded(child: remoteCanvas),
-            SizedBox(
-              height: _localKeyboardPaneHeight(size),
-              child: keyboardPane,
+            Positioned.fromRect(
+              rect: remoteRect,
+              child: _buildFoldRemotePane(),
+            ),
+            Positioned.fromRect(
+              rect: inputRect,
+              child: inputPane,
+            ),
+            if (_foldResizePreviewRemotePaneRatio != null) ...[
+              _foldPaneResizePreview(remoteRect),
+              _foldPaneResizePreview(inputRect),
+              _foldPaneRatioOverlay(
+                  splitAxis, size, remoteRect, activeRemoteRatio),
+            ],
+            _foldPaneDividerLine(splitAxis, size, remoteRect),
+            if (_isFoldPaneResizeMode)
+              _foldPaneResizeHitArea(splitAxis, size, remoteRect),
+            if (_isFoldPaneResizeMode)
+              _foldPaneResizeHandle(splitAxis, size, remoteRect),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _foldPaneResizePreview(Rect rect) {
+    return Positioned.fromRect(
+      rect: rect,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0x803B82F6),
+            border: Border.all(color: const Color(0xCC93C5FD), width: 1),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _foldPaneDividerLine(Axis splitAxis, Size size, Rect remoteRect) {
+    final isHorizontal = splitAxis == Axis.horizontal;
+    return Positioned(
+      left: isHorizontal ? remoteRect.right - 0.5 : 0,
+      top: isHorizontal ? 0 : remoteRect.bottom - 0.5,
+      width: isHorizontal ? 1 : size.width,
+      height: isHorizontal ? size.height : 1,
+      child: const IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(color: Color(0xFF4B4D50)),
+        ),
+      ),
+    );
+  }
+
+  double _foldRatioOverlayOffset(double value, double total, double extent) {
+    final maxOffset = total - extent - 8.0;
+    if (maxOffset < 8.0) {
+      return ((total - extent) / 2).clamp(0.0, double.infinity).toDouble();
+    }
+    return value.clamp(8.0, maxOffset).toDouble();
+  }
+
+  Widget _foldPaneRatioOverlay(
+    Axis splitAxis,
+    Size size,
+    Rect remoteRect,
+    double remoteRatio,
+  ) {
+    final isHorizontal = splitAxis == Axis.horizontal;
+    const overlayWidth = 220.0;
+    const overlayHeight = 28.0;
+    return Positioned(
+      left: isHorizontal
+          ? _foldRatioOverlayOffset(
+              remoteRect.right - overlayWidth / 2,
+              size.width,
+              overlayWidth,
+            )
+          : _foldRatioOverlayOffset(
+              (size.width - overlayWidth) / 2,
+              size.width,
+              overlayWidth,
+            ),
+      top: isHorizontal
+          ? 10
+          : _foldRatioOverlayOffset(
+              remoteRect.bottom - overlayHeight - 8,
+              size.height,
+              overlayHeight,
+            ),
+      width: overlayWidth,
+      height: overlayHeight,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xCC1B1D1F),
+            border: Border.all(color: const Color(0xFF93C5FD)),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Center(
+            child: Text(
+              _foldPaneRatioLabel(remoteRatio),
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _foldPaneResizeHitArea(Axis splitAxis, Size size, Rect remoteRect) {
+    final isHorizontal = splitAxis == Axis.horizontal;
+    return Positioned(
+      left: isHorizontal ? remoteRect.right - _foldResizeHitExtent / 2 : 0,
+      top: isHorizontal ? 0 : remoteRect.bottom - _foldResizeHitExtent / 2,
+      width: isHorizontal ? _foldResizeHitExtent : size.width,
+      height: isHorizontal ? size.height : _foldResizeHitExtent,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onPanStart: (_) => _startFoldPaneResize(),
+        onPanUpdate: (details) =>
+            _updateFoldPaneResize(splitAxis, size, details),
+        onPanEnd: (_) => _endFoldPaneResize(),
+        onPanCancel: _cancelFoldPaneResize,
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+
+  Widget _foldPaneResizeHandle(Axis splitAxis, Size size, Rect remoteRect) {
+    final isHorizontal = splitAxis == Axis.horizontal;
+    final handleWidth = isHorizontal ? 22.0 : 44.0;
+    final handleHeight = isHorizontal ? 44.0 : 22.0;
+    return Positioned(
+      left: isHorizontal
+          ? remoteRect.right - handleWidth / 2
+          : (size.width - handleWidth) / 2,
+      top: isHorizontal
+          ? (size.height - handleHeight) / 2
+          : remoteRect.bottom - handleHeight / 2,
+      width: handleWidth,
+      height: handleHeight,
+      child: Tooltip(
+        message: translate('Drag to Resize'),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) => _startFoldPaneResize(),
+          onPanUpdate: (details) =>
+              _updateFoldPaneResize(splitAxis, size, details),
+          onPanEnd: (_) => _endFoldPaneResize(),
+          onPanCancel: _cancelFoldPaneResize,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xE61B1D1F),
+              border: Border.all(color: const Color(0xFF93C5FD)),
+              borderRadius: BorderRadius.circular(999),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x55000000),
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Center(
+              child: RotatedBox(
+                quarterTurns: isHorizontal ? 1 : 0,
+                child: const Text(
+                  '...',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFoldRemotePane() {
+    return LayoutBuilder(builder: (context, constraints) {
+      final viewportSize = Size(constraints.maxWidth, constraints.maxHeight);
+      _syncFoldCanvasViewport(viewportSize);
+      return DecoratedBox(
+        decoration: const BoxDecoration(color: Colors.black),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: ClipRect(
+                child: RawTouchGestureDetectorRegion(
+                  child: _buildRemoteCanvasStack(
+                    includeHiddenTextInput: false,
+                    keyboardIsVisible: false,
+                    fillCanvasPainters: true,
+                    includeKeyHelpTools: false,
+                  ),
+                  ffi: gFFI,
+                ),
+              ),
             ),
           ],
         ),
       );
-    }
-
-    return Container(
-      color: MyTheme.canvasColor,
-      child: Row(
-        children: [
-          Expanded(child: remoteCanvas),
-          SizedBox(
-            width: _localKeyboardPaneWidth(size),
-            child: keyboardPane,
-          ),
-        ],
-      ),
-    );
+    });
   }
 
   Widget _buildRemoteCanvasStack({
     required bool includeHiddenTextInput,
     required bool keyboardIsVisible,
+    bool fillCanvasPainters = false,
+    bool includeKeyHelpTools = true,
   }) {
     return Stack(children: () {
       final paints = [
-        ImagePaint(ffiModel: gFFI.ffiModel),
+        fillCanvasPainters
+            ? Positioned.fill(child: ImagePaint(ffiModel: gFFI.ffiModel))
+            : ImagePaint(ffiModel: gFFI.ffiModel),
         Positioned(
           top: 10,
           right: 10,
           child: QualityMonitor(gFFI.qualityMonitorModel),
         ),
-        KeyHelpTools(
-            keyboardIsVisible: keyboardIsVisible,
-            showGestureHelp: _showGestureHelp),
+        if (includeKeyHelpTools)
+          KeyHelpTools(
+              keyboardIsVisible: keyboardIsVisible,
+              showGestureHelp: _showGestureHelp),
         if (includeHiddenTextInput)
           SizedBox(
             width: 0,
@@ -889,7 +2551,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           ),
       ];
       if (showCursorPaint) {
-        paints.add(CursorPaint(widget.id));
+        paints.add(fillCanvasPainters
+            ? Positioned.fill(child: CursorPaint(widget.id))
+            : CursorPaint(widget.id));
       }
       if (gFFI.ffiModel.touchMode) {
         paints.add(FloatingMouse(
@@ -1103,19 +2767,860 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   // }
 }
 
-class LocalRemoteKeyboard extends StatelessWidget {
-  const LocalRemoteKeyboard({
+class _FoldInputPane extends StatelessWidget {
+  const _FoldInputPane({
+    required this.splitAxis,
+    required this.trackpadPlacement,
+    required this.touchpadRatio,
+    required this.ffi,
+    required this.keyboard,
+    required this.onToggleTrackpadPlacement,
+    required this.onModifierChanged,
+    required this.inputRevision,
+    required this.displayMode,
+    required this.fitRemoteResolutionEnabled,
+    required this.canFitRemoteResolution,
+    required this.onDisplayModeSelected,
+    required this.onToggleFitRemoteResolution,
+    required this.displayModeLabel,
+    required this.displayModeIcon,
+    required this.modifierDisplayStyle,
+    required this.paneResizeMode,
+    required this.paneRatioLabel,
+    required this.onTogglePaneResizeMode,
+    required this.previousLanguageLabel,
+    required this.previousLanguageTooltip,
+    required this.nextLanguageLabel,
+    required this.nextLanguageTooltip,
+    required this.onPreviousLanguagePressed,
+    required this.onNextLanguagePressed,
+    required this.onLanguageSettingsPressed,
+    required this.onOfficialOptionsPressed,
+    required this.onClosePressed,
+    required this.onMoreActionsPressed,
+    required this.onChatPressed,
+    required this.onToggleTouchMode,
+    required this.canToggleTouchMode,
+    required this.touchMode,
+    required this.shortcutCaptureLabel,
+    required this.shortcutCapturePreview,
+    required this.canSaveShortcutCapture,
+    required this.onSaveShortcutCapture,
+    required this.onCancelShortcutCapture,
+    this.toolsBar,
+  });
+
+  final Axis splitAxis;
+  final _TrackpadPlacement trackpadPlacement;
+  final double touchpadRatio;
+  final FFI ffi;
+  final Widget keyboard;
+  final Widget? toolsBar;
+  final VoidCallback onToggleTrackpadPlacement;
+  final VoidCallback onModifierChanged;
+  final int inputRevision;
+  final _FoldRemoteDisplayMode displayMode;
+  final bool fitRemoteResolutionEnabled;
+  final bool canFitRemoteResolution;
+  final ValueChanged<_FoldRemoteDisplayMode> onDisplayModeSelected;
+  final VoidCallback onToggleFitRemoteResolution;
+  final String Function(_FoldRemoteDisplayMode mode) displayModeLabel;
+  final IconData Function(_FoldRemoteDisplayMode mode) displayModeIcon;
+  final _FoldModifierDisplayStyle modifierDisplayStyle;
+  final bool paneResizeMode;
+  final String paneRatioLabel;
+  final VoidCallback onTogglePaneResizeMode;
+  final String previousLanguageLabel;
+  final String previousLanguageTooltip;
+  final String nextLanguageLabel;
+  final String nextLanguageTooltip;
+  final VoidCallback onPreviousLanguagePressed;
+  final VoidCallback onNextLanguagePressed;
+  final VoidCallback onLanguageSettingsPressed;
+  final VoidCallback onOfficialOptionsPressed;
+  final VoidCallback onClosePressed;
+  final VoidCallback onMoreActionsPressed;
+  final VoidCallback onChatPressed;
+  final VoidCallback onToggleTouchMode;
+  final bool canToggleTouchMode;
+  final bool touchMode;
+  final String? shortcutCaptureLabel;
+  final String shortcutCapturePreview;
+  final bool canSaveShortcutCapture;
+  final VoidCallback onSaveShortcutCapture;
+  final VoidCallback onCancelShortcutCapture;
+
+  Axis get _inputAxis =>
+      splitAxis == Axis.vertical ? Axis.horizontal : Axis.vertical;
+
+  bool _trackpadFirst(Axis inputAxis) {
+    return trackpadPlacement == _TrackpadPlacement.left;
+  }
+
+  Widget _divider(Axis axis) {
+    return SizedBox(
+      width: axis == Axis.horizontal ? 1 : double.infinity,
+      height: axis == Axis.vertical ? 1 : double.infinity,
+      child: const DecoratedBox(
+        decoration: BoxDecoration(color: Color(0xFF4B4D50)),
+      ),
+    );
+  }
+
+  Widget _inputContent(
+    BuildContext context,
+    bool showTrackpad,
+    Axis inputAxis,
+  ) {
+    if (!showTrackpad) {
+      return keyboard;
+    }
+    final touchpadFlex = (touchpadRatio * 1000).round();
+    final keyboardFlex = ((1 - touchpadRatio) * 1000).round();
+    final trackpad = Expanded(
+      flex: touchpadFlex,
+      child: _FoldTouchpad(ffi: ffi),
+    );
+    final keyboardPane = Expanded(
+      flex: keyboardFlex,
+      child: keyboard,
+    );
+    final children = _trackpadFirst(inputAxis)
+        ? <Widget>[trackpad, _divider(inputAxis), keyboardPane]
+        : <Widget>[keyboardPane, _divider(inputAxis), trackpad];
+    return Flex(
+      direction: inputAxis,
+      children: children,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ffiModel = Provider.of<FfiModel>(context);
+    final showTrackpad = !ffiModel.touchMode;
+    final inputAxis = _inputAxis;
+    return Material(
+      color: const Color(0xFF202124),
+      child: LayoutBuilder(builder: (context, constraints) {
+        final maxToolsHeight = constraints.maxHeight.isFinite
+            ? (constraints.maxHeight * 0.45).clamp(48.0, 180.0).toDouble()
+            : 120.0;
+        return Column(
+          children: [
+            _FoldInputToolbar(
+              ffi: ffi,
+              showTrackpad: showTrackpad,
+              inputAxis: inputAxis,
+              trackpadPlacement: trackpadPlacement,
+              inputRevision: inputRevision,
+              displayMode: displayMode,
+              fitRemoteResolutionEnabled: fitRemoteResolutionEnabled,
+              canFitRemoteResolution: canFitRemoteResolution,
+              displayModeLabel: displayModeLabel,
+              displayModeIcon: displayModeIcon,
+              modifierDisplayStyle: modifierDisplayStyle,
+              paneResizeMode: paneResizeMode,
+              paneRatioLabel: paneRatioLabel,
+              onTogglePaneResizeMode: onTogglePaneResizeMode,
+              previousLanguageLabel: previousLanguageLabel,
+              previousLanguageTooltip: previousLanguageTooltip,
+              nextLanguageLabel: nextLanguageLabel,
+              nextLanguageTooltip: nextLanguageTooltip,
+              onToggleTrackpadPlacement: onToggleTrackpadPlacement,
+              onModifierChanged: onModifierChanged,
+              onDisplayModeSelected: onDisplayModeSelected,
+              onToggleFitRemoteResolution: onToggleFitRemoteResolution,
+              onPreviousLanguagePressed: onPreviousLanguagePressed,
+              onNextLanguagePressed: onNextLanguagePressed,
+              onLanguageSettingsPressed: onLanguageSettingsPressed,
+              onOfficialOptionsPressed: onOfficialOptionsPressed,
+              onClosePressed: onClosePressed,
+              onMoreActionsPressed: onMoreActionsPressed,
+              onChatPressed: onChatPressed,
+              onToggleTouchMode: onToggleTouchMode,
+              canToggleTouchMode: canToggleTouchMode,
+              touchMode: touchMode,
+              shortcutCaptureLabel: shortcutCaptureLabel,
+              shortcutCapturePreview: shortcutCapturePreview,
+              canSaveShortcutCapture: canSaveShortcutCapture,
+              onSaveShortcutCapture: onSaveShortcutCapture,
+              onCancelShortcutCapture: onCancelShortcutCapture,
+            ),
+            Expanded(child: _inputContent(context, showTrackpad, inputAxis)),
+            if (toolsBar != null)
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxToolsHeight),
+                child: toolsBar!,
+              ),
+          ],
+        );
+      }),
+    );
+  }
+}
+
+class _FoldInputToolbar extends StatelessWidget {
+  const _FoldInputToolbar({
+    required this.ffi,
+    required this.showTrackpad,
+    required this.inputAxis,
+    required this.trackpadPlacement,
+    required this.inputRevision,
+    required this.displayMode,
+    required this.fitRemoteResolutionEnabled,
+    required this.canFitRemoteResolution,
+    required this.displayModeLabel,
+    required this.displayModeIcon,
+    required this.modifierDisplayStyle,
+    required this.paneResizeMode,
+    required this.paneRatioLabel,
+    required this.onTogglePaneResizeMode,
+    required this.previousLanguageLabel,
+    required this.previousLanguageTooltip,
+    required this.nextLanguageLabel,
+    required this.nextLanguageTooltip,
+    required this.onToggleTrackpadPlacement,
+    required this.onModifierChanged,
+    required this.onDisplayModeSelected,
+    required this.onToggleFitRemoteResolution,
+    required this.onPreviousLanguagePressed,
+    required this.onNextLanguagePressed,
+    required this.onLanguageSettingsPressed,
+    required this.onOfficialOptionsPressed,
+    required this.onClosePressed,
+    required this.onMoreActionsPressed,
+    required this.onChatPressed,
+    required this.onToggleTouchMode,
+    required this.canToggleTouchMode,
+    required this.touchMode,
+    required this.shortcutCaptureLabel,
+    required this.shortcutCapturePreview,
+    required this.canSaveShortcutCapture,
+    required this.onSaveShortcutCapture,
+    required this.onCancelShortcutCapture,
+  });
+
+  final FFI ffi;
+  final bool showTrackpad;
+  final Axis inputAxis;
+  final _TrackpadPlacement trackpadPlacement;
+  final int inputRevision;
+  final _FoldRemoteDisplayMode displayMode;
+  final bool fitRemoteResolutionEnabled;
+  final bool canFitRemoteResolution;
+  final String Function(_FoldRemoteDisplayMode mode) displayModeLabel;
+  final IconData Function(_FoldRemoteDisplayMode mode) displayModeIcon;
+  final _FoldModifierDisplayStyle modifierDisplayStyle;
+  final bool paneResizeMode;
+  final String paneRatioLabel;
+  final VoidCallback onTogglePaneResizeMode;
+  final String previousLanguageLabel;
+  final String previousLanguageTooltip;
+  final String nextLanguageLabel;
+  final String nextLanguageTooltip;
+  final VoidCallback onToggleTrackpadPlacement;
+  final VoidCallback onModifierChanged;
+  final ValueChanged<_FoldRemoteDisplayMode> onDisplayModeSelected;
+  final VoidCallback onToggleFitRemoteResolution;
+  final VoidCallback onPreviousLanguagePressed;
+  final VoidCallback onNextLanguagePressed;
+  final VoidCallback onLanguageSettingsPressed;
+  final VoidCallback onOfficialOptionsPressed;
+  final VoidCallback onClosePressed;
+  final VoidCallback onMoreActionsPressed;
+  final VoidCallback onChatPressed;
+  final VoidCallback onToggleTouchMode;
+  final bool canToggleTouchMode;
+  final bool touchMode;
+  final String? shortcutCaptureLabel;
+  final String shortcutCapturePreview;
+  final bool canSaveShortcutCapture;
+  final VoidCallback onSaveShortcutCapture;
+  final VoidCallback onCancelShortcutCapture;
+
+  InputModel get inputModel => ffi.inputModel;
+
+  void _toggleModifier(void Function(InputModel model) update) {
+    update(inputModel);
+    onModifierChanged();
+  }
+
+  Widget _separator() => const SizedBox(
+        height: 24,
+        child: VerticalDivider(width: 1, color: Color(0xFF4B4D50)),
+      );
+
+  Widget _iconButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+    bool selected = false,
+  }) {
+    return IconButton(
+      tooltip: tooltip,
+      color: selected ? MyTheme.accent : Colors.white70,
+      disabledColor: Colors.white24,
+      icon: Icon(icon, size: 20),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+      onPressed: onPressed,
+    );
+  }
+
+  Widget _coloredIconButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+    required Color color,
+  }) {
+    final background = onPressed == null ? Colors.white12 : color;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: SizedBox(
+        width: 40,
+        height: 32,
+        child: Tooltip(
+          message: tooltip,
+          child: TextButton(
+            style: TextButton.styleFrom(
+              backgroundColor: background,
+              foregroundColor: Colors.white,
+              disabledForegroundColor: Colors.white38,
+              minimumSize: Size.zero,
+              padding: EdgeInsets.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+            onPressed: onPressed,
+            child: Icon(icon, size: 18),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _modifierButton({
+    required String label,
+    required bool selected,
+    required VoidCallback onPressed,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: SizedBox(
+        height: 32,
+        child: TextButton(
+          style: TextButton.styleFrom(
+            backgroundColor:
+                selected ? MyTheme.accent80 : const Color(0xFF313438),
+            foregroundColor: Colors.white,
+            minimumSize: const Size(44, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ),
+          onPressed: onPressed,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _textButton({
+    required String label,
+    required String tooltip,
+    required VoidCallback? onPressed,
+    bool selected = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: SizedBox(
+        height: 32,
+        child: TextButton(
+          style: TextButton.styleFrom(
+            backgroundColor:
+                selected ? MyTheme.accent80 : const Color(0xFF313438),
+            foregroundColor: Colors.white,
+            disabledForegroundColor: Colors.white24,
+            minimumSize: const Size(58, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ),
+          onPressed: onPressed,
+          child: Tooltip(
+            message: tooltip,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _trackpadPlacementButton() {
+    final nextIsLeft = trackpadPlacement == _TrackpadPlacement.right;
+    final icon = inputAxis == Axis.horizontal
+        ? (nextIsLeft
+            ? Icons.keyboard_double_arrow_left
+            : Icons.keyboard_double_arrow_right)
+        : (nextIsLeft
+            ? Icons.keyboard_double_arrow_up
+            : Icons.keyboard_double_arrow_down);
+    return _iconButton(
+      tooltip:
+          nextIsLeft ? translate('Trackpad Left') : translate('Trackpad Right'),
+      icon: icon,
+      onPressed: showTrackpad ? onToggleTrackpadPlacement : null,
+    );
+  }
+
+  Widget _displayModeButton() {
+    return PopupMenuButton<_FoldRemoteDisplayMode>(
+      tooltip: '${translate('Display Mode')}: ${displayModeLabel(displayMode)}',
+      initialValue: displayMode,
+      icon: Icon(
+        displayModeIcon(displayMode),
+        color: Colors.white70,
+        size: 20,
+      ),
+      padding: EdgeInsets.zero,
+      onSelected: onDisplayModeSelected,
+      itemBuilder: (context) => _FoldRemoteDisplayMode.values
+          .map((mode) => PopupMenuItem<_FoldRemoteDisplayMode>(
+                value: mode,
+                child: Text(displayModeLabel(mode)),
+              ))
+          .toList(),
+    );
+  }
+
+  Widget _paneRatioButton() {
+    return _iconButton(
+      tooltip: '${translate('Adjust Split Ratio')}: $paneRatioLabel',
+      icon: Icons.splitscreen,
+      selected: paneResizeMode,
+      onPressed: onTogglePaneResizeMode,
+    );
+  }
+
+  List<Widget> _languageButtons() {
+    return [
+      _textButton(
+        label: previousLanguageLabel,
+        tooltip: previousLanguageTooltip,
+        onPressed: onPreviousLanguagePressed,
+      ),
+      _textButton(
+        label: nextLanguageLabel,
+        tooltip: nextLanguageTooltip,
+        onPressed: onNextLanguagePressed,
+      ),
+    ];
+  }
+
+  List<Widget> _shortcutCaptureButtons() {
+    final label = shortcutCaptureLabel;
+    if (label == null) {
+      return const [];
+    }
+    return [
+      _coloredIconButton(
+        tooltip: '$label: $shortcutCapturePreview\n${translate('Save')}',
+        icon: Icons.check,
+        color: const Color(0xFF2563EB),
+        onPressed: canSaveShortcutCapture ? onSaveShortcutCapture : null,
+      ),
+      _coloredIconButton(
+        tooltip: translate('Cancel'),
+        icon: Icons.close,
+        color: const Color(0xFFDC2626),
+        onPressed: onCancelShortcutCapture,
+      ),
+    ];
+  }
+
+  List<Widget> _modifierButtons(_FoldModifierLabels modifierLabels) {
+    final shift = _modifierButton(
+      label: translate('Shift'),
+      selected: inputModel.shift,
+      onPressed: () => _toggleModifier((model) => model.shift = !model.shift),
+    );
+    final control = _modifierButton(
+      label: modifierLabels.control,
+      selected: inputModel.ctrl,
+      onPressed: () => _toggleModifier((model) => model.ctrl = !model.ctrl),
+    );
+    final alt = _modifierButton(
+      label: modifierLabels.alt,
+      selected: inputModel.alt,
+      onPressed: () => _toggleModifier((model) => model.alt = !model.alt),
+    );
+    final meta = _modifierButton(
+      label: modifierLabels.meta,
+      selected: inputModel.command,
+      onPressed: () =>
+          _toggleModifier((model) => model.command = !model.command),
+    );
+    if (modifierDisplayStyle == _FoldModifierDisplayStyle.mac) {
+      return [shift, control, alt, meta];
+    }
+    return [shift, control, meta, alt];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Read this value so the toolbar rebuilds when parent modifier state changes.
+    final _ = inputRevision;
+    final modifierLabels = _foldModifierLabels(modifierDisplayStyle);
+    return SizedBox(
+      height: 44,
+      child: Material(
+        color: const Color(0xFF1B1D1F),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _iconButton(
+                tooltip: translate('Close'),
+                icon: Icons.clear,
+                onPressed: onClosePressed,
+              ),
+              _iconButton(
+                tooltip: translate('Official Settings'),
+                icon: Icons.tv,
+                onPressed: onOfficialOptionsPressed,
+              ),
+              _iconButton(
+                tooltip: translate('Text chat'),
+                icon: Icons.message,
+                onPressed: onChatPressed,
+              ),
+              _iconButton(
+                tooltip: translate(touchMode ? 'Mouse mode' : 'Touch mode'),
+                icon: touchMode ? Icons.mouse : Icons.touch_app,
+                onPressed: canToggleTouchMode ? onToggleTouchMode : null,
+              ),
+              _iconButton(
+                tooltip: translate('More'),
+                icon: Icons.more_vert,
+                onPressed: onMoreActionsPressed,
+              ),
+              _separator(),
+              _displayModeButton(),
+              _paneRatioButton(),
+              if (canFitRemoteResolution)
+                _iconButton(
+                  tooltip: translate('resolution_fit_local_tip'),
+                  icon: Icons.display_settings,
+                  selected: fitRemoteResolutionEnabled,
+                  onPressed: onToggleFitRemoteResolution,
+                ),
+              _separator(),
+              ..._modifierButtons(modifierLabels),
+              _separator(),
+              ..._languageButtons(),
+              _iconButton(
+                tooltip: translate('Keyboard System Switch'),
+                icon: Icons.tune,
+                onPressed: onLanguageSettingsPressed,
+              ),
+              ..._shortcutCaptureButtons(),
+              _separator(),
+              _trackpadPlacementButton(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FoldTouchpad extends StatefulWidget {
+  const _FoldTouchpad({required this.ffi});
+
+  final FFI ffi;
+
+  @override
+  State<_FoldTouchpad> createState() => _FoldTouchpadState();
+}
+
+class _FoldTouchpadState extends State<_FoldTouchpad> {
+  static const double _tapSlop = 8.0;
+  static const double _scrollScale = 0.65;
+
+  final Map<int, Offset> _activePointers = {};
+  Offset? _lastFocalPoint;
+  Offset _scrollRemainder = Offset.zero;
+  double _gestureDistance = 0.0;
+  int _maxPointerCount = 0;
+
+  Offset get _currentFocalPoint {
+    if (_activePointers.isEmpty) {
+      return Offset.zero;
+    }
+    var x = 0.0;
+    var y = 0.0;
+    for (final point in _activePointers.values) {
+      x += point.dx;
+      y += point.dy;
+    }
+    return Offset(x / _activePointers.length, y / _activePointers.length);
+  }
+
+  void _startPointer(PointerDownEvent event) {
+    if (_activePointers.isEmpty) {
+      _gestureDistance = 0.0;
+      _maxPointerCount = 0;
+      _lastFocalPoint = event.localPosition;
+    }
+    _activePointers[event.pointer] = event.localPosition;
+    _maxPointerCount = _maxPointerCount < _activePointers.length
+        ? _activePointers.length
+        : _maxPointerCount;
+    _lastFocalPoint = _currentFocalPoint;
+  }
+
+  void _movePointer(PointerMoveEvent event) {
+    if (!_activePointers.containsKey(event.pointer)) {
+      return;
+    }
+    final previousFocalPoint = _lastFocalPoint ?? _currentFocalPoint;
+    _activePointers[event.pointer] = event.localPosition;
+    final nextFocalPoint = _currentFocalPoint;
+    final delta = nextFocalPoint - previousFocalPoint;
+    _lastFocalPoint = nextFocalPoint;
+    if (delta == Offset.zero) {
+      return;
+    }
+    _gestureDistance += delta.distance;
+    if (_activePointers.length >= 2) {
+      _sendTrackpadScroll(delta);
+    } else {
+      unawaited(widget.ffi.cursorModel.updatePan(
+        delta,
+        event.localPosition,
+        false,
+      ));
+    }
+  }
+
+  void _endPointer(PointerEvent event) {
+    _activePointers.remove(event.pointer);
+    if (_activePointers.isNotEmpty) {
+      _lastFocalPoint = _currentFocalPoint;
+      return;
+    }
+    final isTap = _gestureDistance < _tapSlop;
+    final pointerCount = _maxPointerCount;
+    _lastFocalPoint = null;
+    _gestureDistance = 0.0;
+    _maxPointerCount = 0;
+    if (!isTap) {
+      return;
+    }
+    unawaited(widget.ffi.inputModel
+        .tap(pointerCount >= 2 ? MouseButtons.right : MouseButtons.left));
+  }
+
+  void _sendTrackpadScroll(Offset rawDelta) {
+    if (!widget.ffi.inputModel.keyboardPerm ||
+        widget.ffi.inputModel.isViewCamera) {
+      return;
+    }
+    final speed = widget.ffi.inputModel.trackpadSpeed / 100.0;
+    _scrollRemainder += rawDelta * speed * _scrollScale;
+    final x = _scrollRemainder.dx.truncate();
+    final y = _scrollRemainder.dy.truncate();
+    if (x == 0 && y == 0) {
+      return;
+    }
+    _scrollRemainder -= Offset(x.toDouble(), y.toDouble());
+    unawaited(bind.sessionSendMouse(
+      sessionId: widget.ffi.sessionId,
+      msg: json.encode(widget.ffi.inputModel.modify({
+        'type': 'trackpad',
+        'x': '$x',
+        'y': '$y',
+      })),
+    ));
+  }
+
+  Widget _buttonArea({
+    required Widget child,
+    required VoidCallback onTap,
+    String? tooltip,
+  }) {
+    final button = InkWell(
+      onTap: onTap,
+      child: Center(child: child),
+    );
+    return Expanded(
+      child:
+          tooltip == null ? button : Tooltip(message: tooltip, child: button),
+    );
+  }
+
+  Widget _wheelArea() {
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanUpdate: (details) => _sendTrackpadScroll(details.delta),
+        child: Tooltip(
+          message: translate('Mouse Wheel'),
+          child: Center(
+            child: Icon(
+              Icons.unfold_more,
+              color: Colors.white70,
+              size: 22,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Color(0xFF151719),
+        border: Border(
+          right: BorderSide(color: Color(0xFF2F3337)),
+          bottom: BorderSide(color: Color(0xFF2F3337)),
+        ),
+      ),
+      child: Column(
+        children: [
+          Expanded(
+            flex: 4,
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: _startPointer,
+              onPointerMove: _movePointer,
+              onPointerUp: _endPointer,
+              onPointerCancel: _endPointer,
+              child: const Center(
+                child: Icon(
+                  Icons.touch_app,
+                  color: Colors.white70,
+                  size: 36,
+                ),
+              ),
+            ),
+          ),
+          const Divider(height: 1, color: Color(0xFF2F3337)),
+          Expanded(
+            child: Material(
+              color: const Color(0xFF1B1D1F),
+              child: Row(
+                children: [
+                  _buttonArea(
+                    tooltip: translate('Left Mouse'),
+                    onTap: () =>
+                        unawaited(widget.ffi.inputModel.tap(MouseButtons.left)),
+                    child: const Text(
+                      'L',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const VerticalDivider(width: 1, color: Color(0xFF2F3337)),
+                  _wheelArea(),
+                  const VerticalDivider(width: 1, color: Color(0xFF2F3337)),
+                  _buttonArea(
+                    tooltip: translate('Right Mouse'),
+                    onTap: () => unawaited(
+                        widget.ffi.inputModel.tap(MouseButtons.right)),
+                    child: const Text(
+                      'R',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocalRemoteKeyboard extends StatefulWidget {
+  const _LocalRemoteKeyboard({
     Key? key,
-    required this.textController,
+    required this.ffi,
     required this.onCharacter,
     required this.onSpecialKey,
-    required this.onSendText,
+    required this.onComboKey,
+    required this.onModifierChanged,
+    required this.isCapturingShortcut,
+    required this.onCaptureShortcutKey,
+    required this.modifierDisplayStyle,
+    required this.remoteImeModeEnabled,
+    required this.onRemoteImeKeyEvent,
   }) : super(key: key);
 
-  final TextEditingController textController;
+  final FFI ffi;
   final ValueChanged<String> onCharacter;
   final ValueChanged<String> onSpecialKey;
-  final ValueChanged<String> onSendText;
+  final void Function(String keyName, int usbHid) onRemoteImeKeyEvent;
+  final ValueChanged<String> onCaptureShortcutKey;
+  final VoidCallback onModifierChanged;
+  final bool isCapturingShortcut;
+  final bool remoteImeModeEnabled;
+  final _FoldModifierDisplayStyle modifierDisplayStyle;
+  final void Function(
+    String key, {
+    bool ctrl,
+    bool alt,
+    bool shift,
+    bool command,
+  }) onComboKey;
+
+  @override
+  State<_LocalRemoteKeyboard> createState() => _LocalRemoteKeyboardState();
+}
+
+class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
+  _LocalKeyboardLayer _layer = _LocalKeyboardLayer.main;
+
+  InputModel get inputModel => widget.ffi.inputModel;
+
+  bool get _isMac => widget.ffi.ffiModel.pi.platform == kPeerPlatformMacOS;
+
+  _FoldModifierLabels get _modifierLabels =>
+      _foldModifierLabels(widget.modifierDisplayStyle);
+
+  @override
+  void didUpdateWidget(covariant _LocalRemoteKeyboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.isCapturingShortcut && widget.isCapturingShortcut) {
+      _layer = _LocalKeyboardLayer.system;
+    }
+  }
 
   List<Widget> _withHorizontalGaps(List<Widget> children, double gap) {
     final separated = <Widget>[];
@@ -1128,156 +3633,484 @@ class LocalRemoteKeyboard extends StatelessWidget {
     return separated;
   }
 
+  void _setLayer(_LocalKeyboardLayer layer) {
+    setState(() => _layer = layer);
+  }
+
+  void _releaseMomentaryShift() {
+    if (!inputModel.shift) {
+      return;
+    }
+    setState(() => inputModel.shift = false);
+    widget.onModifierChanged();
+  }
+
+  void _sendCombo(
+    String key, {
+    bool ctrl = false,
+    bool alt = false,
+    bool shift = false,
+    bool command = false,
+  }) {
+    widget.onComboKey(
+      key,
+      ctrl: ctrl,
+      alt: alt,
+      shift: shift,
+      command: command,
+    );
+    _releaseMomentaryShift();
+  }
+
   Widget _keyButton({
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
     String? label,
     IconData? icon,
     int flex = 1,
     required double height,
+    required double fontSize,
+    required double iconSize,
+    bool selected = false,
+    String? tooltip,
   }) {
+    final button = SizedBox(
+      height: height,
+      child: TextButton(
+        style: TextButton.styleFrom(
+          backgroundColor:
+              selected ? MyTheme.accent80 : const Color(0xFF3B3D40),
+          foregroundColor: Colors.white,
+          minimumSize: Size.zero,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+        onPressed: onPressed,
+        child: icon == null
+            ? FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label ?? '',
+                  style: TextStyle(
+                    fontSize: fontSize,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              )
+            : Icon(icon, size: iconSize),
+      ),
+    );
     return Expanded(
       flex: flex,
-      child: SizedBox(
-        height: height,
-        child: TextButton(
-          style: TextButton.styleFrom(
-            backgroundColor: const Color(0xFF3B3D40),
-            foregroundColor: Colors.white,
-            minimumSize: Size.zero,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(6),
-            ),
-          ),
-          onPressed: onPressed,
-          child: icon == null
-              ? FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    label ?? '',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                )
-              : Icon(icon, size: 18),
-        ),
-      ),
+      child:
+          tooltip == null ? button : Tooltip(message: tooltip, child: button),
     );
   }
 
-  Widget _characterRow(String characters, double keyHeight, double gap) {
+  Widget _row(List<Widget> keys, double gap) {
+    return Row(children: _withHorizontalGaps(keys, gap));
+  }
+
+  Widget _layerButton({
+    required _LocalKeyboardLayer layer,
+    required IconData icon,
+    required double keyHeight,
+    required double fontSize,
+    required double iconSize,
+    required String tooltip,
+  }) {
+    return _keyButton(
+      icon: icon,
+      flex: 2,
+      height: keyHeight,
+      fontSize: fontSize,
+      iconSize: iconSize,
+      selected: _layer == layer,
+      tooltip: tooltip,
+      onPressed: () => _setLayer(layer),
+    );
+  }
+
+  Widget _mainLayerButton(
+    double keyHeight,
+    double fontSize,
+    double iconSize,
+  ) {
+    return _layerButton(
+      layer: _LocalKeyboardLayer.main,
+      icon: Icons.keyboard,
+      keyHeight: keyHeight,
+      fontSize: fontSize,
+      iconSize: iconSize,
+      tooltip: translate('Input Pane'),
+    );
+  }
+
+  Widget _characterKey(
+    String char,
+    double keyHeight,
+    double fontSize,
+    double iconSize, {
+    int flex = 1,
+  }) {
+    final label = char == ' '
+        ? translate('Space')
+        : char == '\n'
+            ? translate('Enter')
+            : char;
+    return _keyButton(
+      label: label,
+      flex: flex,
+      height: keyHeight,
+      fontSize: fontSize,
+      iconSize: iconSize,
+      onPressed: () {
+        if (widget.isCapturingShortcut) {
+          return;
+        }
+        final remoteImeKey = widget.remoteImeModeEnabled
+            ? _foldRemoteImeKeyEventForCharacter(char)
+            : null;
+        if (remoteImeKey != null) {
+          widget.onRemoteImeKeyEvent(remoteImeKey.keyName, remoteImeKey.usbHid);
+          _releaseMomentaryShift();
+          return;
+        }
+        widget.onCharacter(char);
+        _releaseMomentaryShift();
+      },
+    );
+  }
+
+  Widget _specialKey(
+    String label,
+    String key,
+    double keyHeight,
+    double fontSize,
+    double iconSize, {
+    IconData? icon,
+    int flex = 1,
+  }) {
+    return _keyButton(
+      label: icon == null ? label : null,
+      icon: icon,
+      flex: flex,
+      height: keyHeight,
+      fontSize: fontSize,
+      iconSize: iconSize,
+      onPressed: () {
+        if (widget.isCapturingShortcut) {
+          widget.onCaptureShortcutKey(key);
+          return;
+        }
+        final remoteImeKey = widget.remoteImeModeEnabled
+            ? _foldRemoteImeKeyEventForKeyName(key)
+            : null;
+        if (remoteImeKey != null) {
+          widget.onRemoteImeKeyEvent(remoteImeKey.keyName, remoteImeKey.usbHid);
+          _releaseMomentaryShift();
+          return;
+        }
+        widget.onSpecialKey(key);
+        _releaseMomentaryShift();
+      },
+    );
+  }
+
+  Widget _modifierKey(
+    String label,
+    bool active,
+    VoidCallback onPressed,
+    double keyHeight,
+    double fontSize,
+    double iconSize,
+  ) {
+    return _keyButton(
+      label: label,
+      height: keyHeight,
+      fontSize: fontSize,
+      iconSize: iconSize,
+      selected: active,
+      onPressed: onPressed,
+    );
+  }
+
+  Widget _characterRow(
+    String characters,
+    double keyHeight,
+    double gap,
+    double fontSize,
+    double iconSize,
+  ) {
     final keys = characters
         .split('')
-        .map((char) => _keyButton(
-              label: char,
-              height: keyHeight,
-              onPressed: () => onCharacter(char),
+        .map((char) => _characterKey(
+              char,
+              keyHeight,
+              fontSize,
+              iconSize,
             ))
         .toList();
-    return Row(children: _withHorizontalGaps(keys, gap));
+    return _row(keys, gap);
   }
 
-  Widget _textInputRow(BuildContext context, double keyHeight, double gap) {
-    return Row(
-      children: [
-        Expanded(
-          child: SizedBox(
-            height: keyHeight,
-            child: TextField(
-              controller: textController,
-              minLines: 1,
-              maxLines: 1,
-              textInputAction: TextInputAction.done,
-              autocorrect: false,
-              onSubmitted: onSendText,
-              style: const TextStyle(color: Colors.white),
-              cursorColor: MyTheme.accent,
-              decoration: InputDecoration(
-                isDense: true,
-                filled: true,
-                fillColor: const Color(0xFF151719),
-                hintText: translate('Text'),
-                hintStyle: const TextStyle(color: Colors.white54),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: const BorderSide(color: Color(0xFF4B4D50)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: const BorderSide(color: MyTheme.accent),
-                ),
-              ),
-            ),
-          ),
+  List<Widget> _mainRows(
+    double keyHeight,
+    double gap,
+    double fontSize,
+    double iconSize,
+  ) {
+    return [
+      _row([
+        _layerButton(
+          layer: _LocalKeyboardLayer.system,
+          icon: Icons.tune,
+          keyHeight: keyHeight,
+          fontSize: fontSize,
+          iconSize: iconSize,
+          tooltip: translate('System Keys'),
         ),
-        SizedBox(width: gap),
-        SizedBox(
+        ...'1234567890'.split('').map(
+              (char) => _characterKey(char, keyHeight, fontSize, iconSize),
+            ),
+        _layerButton(
+          layer: _LocalKeyboardLayer.symbols,
+          icon: Icons.tag,
+          keyHeight: keyHeight,
+          fontSize: fontSize,
+          iconSize: iconSize,
+          tooltip: translate('Symbols'),
+        ),
+      ], gap),
+      _characterRow('qwertyuiop', keyHeight, gap, fontSize, iconSize),
+      Padding(
+        padding: EdgeInsets.symmetric(horizontal: keyHeight * 0.22),
+        child: _characterRow('asdfghjkl', keyHeight, gap, fontSize, iconSize),
+      ),
+      Padding(
+        padding: EdgeInsets.symmetric(horizontal: keyHeight * 0.44),
+        child: _characterRow('zxcvbnm', keyHeight, gap, fontSize, iconSize),
+      ),
+      _row([
+        _specialKey('Esc', 'VK_ESCAPE', keyHeight, fontSize, iconSize),
+        _specialKey('Tab', 'VK_TAB', keyHeight, fontSize, iconSize),
+        _specialKey(
+          'Backspace',
+          'VK_BACK',
+          keyHeight,
+          fontSize,
+          iconSize,
+          icon: Icons.backspace_outlined,
+          flex: 2,
+        ),
+      ], gap),
+      _row([
+        _characterKey(' ', keyHeight, fontSize, iconSize, flex: 5),
+        _characterKey('\n', keyHeight, fontSize, iconSize, flex: 2),
+      ], gap),
+    ];
+  }
+
+  List<Widget> _systemRows(
+    double keyHeight,
+    double gap,
+    double fontSize,
+    double iconSize,
+  ) {
+    void toggleModifier(String key, void Function() update) {
+      setState(update);
+      widget.onModifierChanged();
+      if (widget.isCapturingShortcut) {
+        widget.onCaptureShortcutKey(key);
+      }
+    }
+
+    final shift = _modifierKey(
+        translate('Shift'),
+        inputModel.shift,
+        () => toggleModifier(
+            'VK_SHIFT', () => inputModel.shift = !inputModel.shift),
+        keyHeight,
+        fontSize,
+        iconSize);
+    final control = _modifierKey(
+        _modifierLabels.control,
+        inputModel.ctrl,
+        () => toggleModifier(
+            'VK_CONTROL', () => inputModel.ctrl = !inputModel.ctrl),
+        keyHeight,
+        fontSize,
+        iconSize);
+    final alt = _modifierKey(
+        _modifierLabels.alt,
+        inputModel.alt,
+        () => toggleModifier('VK_MENU', () => inputModel.alt = !inputModel.alt),
+        keyHeight,
+        fontSize,
+        iconSize);
+    final meta = _modifierKey(
+        _modifierLabels.meta,
+        inputModel.command,
+        () => toggleModifier(
+            'Meta', () => inputModel.command = !inputModel.command),
+        keyHeight,
+        fontSize,
+        iconSize);
+    final modifierKeys =
+        widget.modifierDisplayStyle == _FoldModifierDisplayStyle.mac
+            ? [shift, control, alt, meta]
+            : [shift, control, meta, alt];
+
+    return [
+      _row([
+        _mainLayerButton(keyHeight, fontSize, iconSize),
+        ...modifierKeys,
+      ], gap),
+      _row([
+        for (var i = 1; i <= 6; i++)
+          _specialKey('F$i', 'VK_F$i', keyHeight, fontSize, iconSize),
+      ], gap),
+      _row([
+        for (var i = 7; i <= 12; i++)
+          _specialKey('F$i', 'VK_F$i', keyHeight, fontSize, iconSize),
+      ], gap),
+      _row([
+        _specialKey('Home', 'VK_HOME', keyHeight, fontSize, iconSize),
+        _specialKey('End', 'VK_END', keyHeight, fontSize, iconSize),
+        _specialKey('PgUp', 'VK_PRIOR', keyHeight, fontSize, iconSize),
+        _specialKey('PgDn', 'VK_NEXT', keyHeight, fontSize, iconSize),
+        _specialKey('Ins', 'VK_INSERT', keyHeight, fontSize, iconSize),
+        _specialKey('Del', 'VK_DELETE', keyHeight, fontSize, iconSize),
+      ], gap),
+      _row([
+        _specialKey('Esc', 'VK_ESCAPE', keyHeight, fontSize, iconSize),
+        _specialKey('Tab', 'VK_TAB', keyHeight, fontSize, iconSize),
+        _specialKey('Space', 'VK_SPACE', keyHeight, fontSize, iconSize,
+            flex: 2),
+        _specialKey('Back', 'VK_BACK', keyHeight, fontSize, iconSize,
+            icon: Icons.backspace_outlined),
+        _specialKey('Enter', 'VK_ENTER', keyHeight, fontSize, iconSize,
+            icon: Icons.keyboard_return),
+        _specialKey('', 'VK_LEFT', keyHeight, fontSize, iconSize,
+            icon: Icons.keyboard_arrow_left),
+        _specialKey('', 'VK_UP', keyHeight, fontSize, iconSize,
+            icon: Icons.keyboard_arrow_up),
+        _specialKey('', 'VK_DOWN', keyHeight, fontSize, iconSize,
+            icon: Icons.keyboard_arrow_down),
+        _specialKey('', 'VK_RIGHT', keyHeight, fontSize, iconSize,
+            icon: Icons.keyboard_arrow_right),
+      ], gap),
+      _row([
+        _keyButton(
+          label: _isMac ? 'Cmd+C' : 'Ctrl+C',
           height: keyHeight,
-          width: 108,
-          child: ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: MyTheme.accent,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(6),
-              ),
-            ),
-            onPressed: () => onSendText(textController.text),
-            icon: const Icon(Icons.send, size: 16),
-            label: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(translate('Send text')),
-            ),
-          ),
+          fontSize: fontSize,
+          iconSize: iconSize,
+          onPressed: widget.isCapturingShortcut
+              ? null
+              : () => _sendCombo(
+                    'VK_C',
+                    ctrl: !_isMac,
+                    command: _isMac,
+                  ),
         ),
-      ],
-    );
+        _keyButton(
+          label: _isMac ? 'Cmd+V' : 'Ctrl+V',
+          height: keyHeight,
+          fontSize: fontSize,
+          iconSize: iconSize,
+          onPressed: widget.isCapturingShortcut
+              ? null
+              : () => _sendCombo(
+                    'VK_V',
+                    ctrl: !_isMac,
+                    command: _isMac,
+                  ),
+        ),
+        _keyButton(
+          label: 'Ctrl+Alt+Del',
+          flex: 2,
+          height: keyHeight,
+          fontSize: fontSize,
+          iconSize: iconSize,
+          onPressed: widget.isCapturingShortcut
+              ? null
+              : () => _sendCombo(
+                    'VK_DELETE',
+                    ctrl: true,
+                    alt: true,
+                  ),
+        ),
+      ], gap),
+    ];
   }
 
-  Widget _specialRow(double keyHeight, double gap) {
-    final keys = [
-      _keyButton(
-        label: 'Esc',
-        height: keyHeight,
-        onPressed: () => onSpecialKey('VK_ESCAPE'),
-      ),
-      _keyButton(
-        label: 'Tab',
-        height: keyHeight,
-        onPressed: () => onSpecialKey('VK_TAB'),
-      ),
-      _keyButton(
-        icon: Icons.backspace_outlined,
-        flex: 2,
-        height: keyHeight,
-        onPressed: () => onSpecialKey('VK_BACK'),
-      ),
+  List<Widget> _symbolRows(
+    double keyHeight,
+    double gap,
+    double fontSize,
+    double iconSize,
+  ) {
+    Widget symbolKey(String symbol) =>
+        _characterKey(symbol, keyHeight, fontSize, iconSize);
+    return [
+      _row([
+        _mainLayerButton(keyHeight, fontSize, iconSize),
+        ...['~', '!', '@', '#', '\$', '%', '^', '&']
+            .map((symbol) => symbolKey(symbol)),
+      ], gap),
+      _row([
+        ...['*', '(', ')', '-', '_', '=', '+', '[']
+            .map((symbol) => symbolKey(symbol)),
+      ], gap),
+      _row([
+        ...[']', '{', '}', '\\', '|', ';', ':', "'"]
+            .map((symbol) => symbolKey(symbol)),
+      ], gap),
+      _row([
+        ...['"', ',', '.', '/', '?', '<', '>']
+            .map((symbol) => symbolKey(symbol)),
+      ], gap),
     ];
-    return Row(children: _withHorizontalGaps(keys, gap));
   }
 
-  Widget _bottomRow(double keyHeight, double gap) {
-    final keys = [
-      _keyButton(
-        label: 'Space',
-        flex: 5,
-        height: keyHeight,
-        onPressed: () => onCharacter(' '),
-      ),
-      _keyButton(
-        icon: Icons.keyboard_return,
-        flex: 2,
-        height: keyHeight,
-        onPressed: () => onCharacter('\n'),
-      ),
-    ];
-    return Row(children: _withHorizontalGaps(keys, gap));
+  int get _rowCount {
+    switch (_layer) {
+      case _LocalKeyboardLayer.main:
+      case _LocalKeyboardLayer.system:
+        return 6;
+      case _LocalKeyboardLayer.symbols:
+        return 4;
+    }
+  }
+
+  List<Widget> _rows(
+    double keyHeight,
+    double gap,
+    double fontSize,
+    double iconSize,
+  ) {
+    switch (_layer) {
+      case _LocalKeyboardLayer.main:
+        return _mainRows(keyHeight, gap, fontSize, iconSize);
+      case _LocalKeyboardLayer.system:
+        return _systemRows(keyHeight, gap, fontSize, iconSize);
+      case _LocalKeyboardLayer.symbols:
+        return _symbolRows(keyHeight, gap, fontSize, iconSize);
+    }
+  }
+
+  List<Widget> _withVerticalGaps(List<Widget> rows, double gap) {
+    final separated = <Widget>[];
+    for (var i = 0; i < rows.length; i++) {
+      if (i > 0) {
+        separated.add(SizedBox(height: gap));
+      }
+      separated.add(rows[i]);
+    }
+    return separated;
   }
 
   @override
@@ -1292,35 +4125,26 @@ class LocalRemoteKeyboard extends StatelessWidget {
           ),
         ),
         child: LayoutBuilder(builder: (context, constraints) {
-          final compact =
-              constraints.maxHeight < 270 || constraints.maxWidth < 360;
-          final keyHeight = compact ? 34.0 : 40.0;
-          final gap = compact ? 4.0 : 6.0;
+          final availableHeight =
+              constraints.maxHeight.isFinite ? constraints.maxHeight : 320.0;
+          final availableWidth =
+              constraints.maxWidth.isFinite ? constraints.maxWidth : 420.0;
+          final compact = availableHeight < 300 || availableWidth < 360;
+          final padding = compact ? 6.0 : 8.0;
+          final gap = (availableHeight / 80).clamp(3.0, 7.0).toDouble();
+          final keyHeight =
+              ((availableHeight - padding * 2 - gap * (_rowCount - 1)) /
+                      _rowCount)
+                  .clamp(30.0, 60.0)
+                  .toDouble();
+          final fontSize = (keyHeight * 0.42).clamp(12.0, 22.0).toDouble();
+          final iconSize = (keyHeight * 0.48).clamp(16.0, 26.0).toDouble();
+          final rows = _rows(keyHeight, gap, fontSize, iconSize);
           return SingleChildScrollView(
-            padding: EdgeInsets.all(compact ? 8 : 10),
+            padding: EdgeInsets.all(padding),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: [
-                _textInputRow(context, keyHeight, gap),
-                SizedBox(height: gap),
-                _characterRow('1234567890', keyHeight, gap),
-                SizedBox(height: gap),
-                _characterRow('qwertyuiop', keyHeight, gap),
-                SizedBox(height: gap),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: keyHeight * 0.35),
-                  child: _characterRow('asdfghjkl', keyHeight, gap),
-                ),
-                SizedBox(height: gap),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: keyHeight * 0.7),
-                  child: _characterRow('zxcvbnm', keyHeight, gap),
-                ),
-                SizedBox(height: gap),
-                _specialRow(keyHeight, gap),
-                SizedBox(height: gap),
-                _bottomRow(keyHeight, gap),
-              ],
+              children: _withVerticalGaps(rows, gap),
             ),
           );
         }),
