@@ -305,7 +305,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Prev Lang", "上个语言"),
         ("Next Lang", "下个语言"),
         ("Set Previous Input Source Shortcut", "设置上个输入源快捷键"),
-        ("Set Next Input Menu Shortcut", "设置输入菜单下一个快捷键"),
+        ("Set Input Next Source In Input Menu Shortcut", "设置输入菜单下一个输入源快捷键"),
         ("Set Previous Language Shortcut", "设置上一个语言快捷键"),
         ("Set Next Language Shortcut", "设置下一个语言快捷键"),
         ("Modifier Display Style", "修饰键显示风格"),
