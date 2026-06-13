@@ -116,11 +116,11 @@ clear app data during upgrade validation.
 - Fold Input Pane still shows toolbar plus keyboard; mouse mode also shows the
   trackpad.
 - Remote IME / Key Events remains the default Fold virtual keyboard input mode.
-- Text Injection remains available from `Keyboard System Switch`.
+- Text Injection remains available from `Target OS`.
 - Language switching shortcuts release all modifiers after sending.
 - After language switching, typing letters such as `n i h a o` still reaches the
   remote IME as key events.
-- Toolbar settings entry still opens Fold keyboard system/input settings.
+- Toolbar settings entry still opens Fold Target OS/input settings.
 - Pane ratio editing still shows the temporary small drag handle and preview.
 - Release APK remains signed with the same Fold release keystore so
   `adb install -r` can update the existing app.
@@ -161,4 +161,3 @@ Keep the following in `RemotePage` until there is a safer boundary:
 - Official toolbar/options integration.
 - Remote IME key event queue and modifier release state.
 - Any logic that directly touches `inputModel`, `ffi`, `bind`, or `sessionId`.
-
