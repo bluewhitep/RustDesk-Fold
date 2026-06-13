@@ -21,6 +21,7 @@ class _FoldInputPane extends StatelessWidget {
     required this.paneResizeMode,
     required this.paneRatioLabel,
     required this.onTogglePaneResizeMode,
+    required this.languageSwitchMode,
     required this.previousLanguageTooltip,
     required this.nextLanguageTooltip,
     required this.onPreviousLanguagePressed,
@@ -61,6 +62,7 @@ class _FoldInputPane extends StatelessWidget {
   final bool paneResizeMode;
   final String paneRatioLabel;
   final VoidCallback onTogglePaneResizeMode;
+  final _FoldLanguageSwitchMode languageSwitchMode;
   final String previousLanguageTooltip;
   final String nextLanguageTooltip;
   final VoidCallback onPreviousLanguagePressed;
@@ -151,6 +153,7 @@ class _FoldInputPane extends StatelessWidget {
               paneResizeMode: paneResizeMode,
               paneRatioLabel: paneRatioLabel,
               onTogglePaneResizeMode: onTogglePaneResizeMode,
+              languageSwitchMode: languageSwitchMode,
               previousLanguageTooltip: previousLanguageTooltip,
               nextLanguageTooltip: nextLanguageTooltip,
               onToggleTrackpadPlacement: onToggleTrackpadPlacement,
@@ -202,6 +205,7 @@ class _FoldInputToolbar extends StatelessWidget {
     required this.paneResizeMode,
     required this.paneRatioLabel,
     required this.onTogglePaneResizeMode,
+    required this.languageSwitchMode,
     required this.previousLanguageTooltip,
     required this.nextLanguageTooltip,
     required this.onToggleTrackpadPlacement,
@@ -239,6 +243,7 @@ class _FoldInputToolbar extends StatelessWidget {
   final bool paneResizeMode;
   final String paneRatioLabel;
   final VoidCallback onTogglePaneResizeMode;
+  final _FoldLanguageSwitchMode languageSwitchMode;
   final String previousLanguageTooltip;
   final String nextLanguageTooltip;
   final VoidCallback onToggleTrackpadPlacement;
@@ -324,6 +329,51 @@ class _FoldInputToolbar extends StatelessWidget {
     );
   }
 
+  Widget _languageSwitchIcon(IconData overlayIcon) {
+    return SizedBox(
+      width: 24,
+      height: 24,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Align(
+            alignment: Alignment.center,
+            child: Icon(Icons.language, size: 20),
+          ),
+          Positioned(
+            right: -2,
+            bottom: -2,
+            child: Container(
+              width: 14,
+              height: 14,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1B1D1F),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white54, width: 0.8),
+              ),
+              child: Icon(overlayIcon, size: 10),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _languageIconButton({
+    required IconData overlayIcon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    return IconButton(
+      tooltip: tooltip,
+      color: Colors.white70,
+      icon: _languageSwitchIcon(overlayIcon),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+      onPressed: onPressed,
+    );
+  }
+
   Widget _modifierButton({
     required String label,
     required bool selected,
@@ -402,14 +452,18 @@ class _FoldInputToolbar extends StatelessWidget {
   }
 
   List<Widget> _languageButtons() {
+    final previousOverlay =
+        languageSwitchMode == _FoldLanguageSwitchMode.macLanguageCycle
+            ? Icons.sync
+            : Icons.arrow_back;
     return [
-      _iconButton(
-        icon: Icons.keyboard_double_arrow_left,
+      _languageIconButton(
+        overlayIcon: previousOverlay,
         tooltip: previousLanguageTooltip,
         onPressed: onPreviousLanguagePressed,
       ),
-      _iconButton(
-        icon: Icons.keyboard_double_arrow_right,
+      _languageIconButton(
+        overlayIcon: Icons.arrow_forward,
         tooltip: nextLanguageTooltip,
         onPressed: onNextLanguagePressed,
       ),

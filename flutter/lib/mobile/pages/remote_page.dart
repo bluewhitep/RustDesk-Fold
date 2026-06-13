@@ -1727,6 +1727,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         _foldResizePreviewRemotePaneRatio ?? _foldRemotePaneRatio,
       ),
       onTogglePaneResizeMode: _toggleFoldPaneResizeMode,
+      languageSwitchMode: _foldLanguageSwitchMode,
       previousLanguageTooltip:
           _foldPreviousLanguageTooltip(_foldLanguageSwitchMode),
       nextLanguageTooltip: _foldNextLanguageTooltip(_foldLanguageSwitchMode),

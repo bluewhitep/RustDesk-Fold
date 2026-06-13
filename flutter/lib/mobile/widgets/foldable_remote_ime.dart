@@ -334,7 +334,7 @@ String _foldLanguageShortcutTitle(_FoldLanguageShortcutSlot slot) {
     case _FoldLanguageShortcutSlot.macPrev:
       return translate('Set Previous Input Source Shortcut');
     case _FoldLanguageShortcutSlot.macNext:
-      return translate('Set Next Input Menu Shortcut');
+      return translate('Set Input Next Source In Input Menu Shortcut');
     case _FoldLanguageShortcutSlot.winPrev:
     case _FoldLanguageShortcutSlot.linuxPrev:
       return translate('Set Previous Language Shortcut');
