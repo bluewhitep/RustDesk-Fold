@@ -603,8 +603,13 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
   final Map<int, Offset> _activePointers = {};
   Offset? _lastFocalPoint;
   Offset _scrollRemainder = Offset.zero;
+  Offset? _wheelPointerLastPosition;
+  Timer? _wheelLongPressTimer;
   double _gestureDistance = 0.0;
   int _maxPointerCount = 0;
+  int? _wheelPointer;
+  bool _wheelLongPressActivated = false;
+  bool _wheelScrollModeActive = false;
 
   Offset get _currentFocalPoint {
     if (_activePointers.isEmpty) {
@@ -645,6 +650,10 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
       return;
     }
     _gestureDistance += delta.distance;
+    if (_wheelScrollModeActive) {
+      _sendTrackpadScroll(delta);
+      return;
+    }
     if (_activePointers.length >= 2) {
       _sendTrackpadScroll(delta);
     } else {
@@ -667,6 +676,9 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
     _lastFocalPoint = null;
     _gestureDistance = 0.0;
     _maxPointerCount = 0;
+    if (_wheelScrollModeActive) {
+      return;
+    }
     if (!isTap) {
       return;
     }
@@ -697,6 +709,150 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
     ));
   }
 
+  void _setWheelScrollMode(bool active) {
+    if (_wheelScrollModeActive == active) {
+      return;
+    }
+    _scrollRemainder = Offset.zero;
+    _activePointers.clear();
+    _lastFocalPoint = null;
+    _gestureDistance = 0.0;
+    _maxPointerCount = 0;
+    setState(() => _wheelScrollModeActive = active);
+  }
+
+  void _onWheelTap() {
+    if (_wheelScrollModeActive) {
+      _setWheelScrollMode(false);
+      return;
+    }
+    unawaited(widget.ffi.inputModel.tap(MouseButtons.wheel));
+  }
+
+  void _startWheelLongPressTimer(PointerDownEvent event) {
+    _wheelLongPressTimer?.cancel();
+    _wheelPointer = event.pointer;
+    _wheelPointerLastPosition = event.localPosition;
+    _wheelLongPressActivated = false;
+    _wheelLongPressTimer = Timer(const Duration(milliseconds: 450), () {
+      if (!mounted || _wheelPointer != event.pointer) {
+        return;
+      }
+      _wheelLongPressActivated = true;
+      _setWheelScrollMode(true);
+    });
+  }
+
+  void _moveWheelPointer(PointerMoveEvent event) {
+    if (event.pointer != _wheelPointer) {
+      return;
+    }
+    final previous = _wheelPointerLastPosition ?? event.localPosition;
+    _wheelPointerLastPosition = event.localPosition;
+    if (!_wheelScrollModeActive) {
+      return;
+    }
+    final delta = event.localPosition - previous;
+    if (delta == Offset.zero) {
+      return;
+    }
+    _sendTrackpadScroll(delta);
+  }
+
+  void _endWheelPointer(PointerEvent event) {
+    if (event.pointer != _wheelPointer) {
+      return;
+    }
+    _wheelLongPressTimer?.cancel();
+    _wheelLongPressTimer = null;
+    _wheelPointer = null;
+    _wheelPointerLastPosition = null;
+    if (_wheelLongPressActivated) {
+      _wheelLongPressActivated = false;
+      return;
+    }
+    _wheelLongPressActivated = false;
+    _onWheelTap();
+  }
+
+  void _cancelWheelPointer(PointerEvent event) {
+    if (event.pointer != _wheelPointer) {
+      return;
+    }
+    _wheelLongPressTimer?.cancel();
+    _wheelLongPressTimer = null;
+    _wheelPointer = null;
+    _wheelPointerLastPosition = null;
+    _wheelLongPressActivated = false;
+  }
+
+  @override
+  void dispose() {
+    _wheelLongPressTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onWheelLongPressStart() {
+    _setWheelScrollMode(true);
+  }
+
+  Widget _trackpadCenterIcon() {
+    final touchIcon = Icon(
+      Icons.touch_app,
+      color: _wheelScrollModeActive ? MyTheme.accent : Colors.white70,
+      size: 36,
+    );
+    if (!_wheelScrollModeActive) {
+      return Center(child: touchIcon);
+    }
+    const arrowSize = 22.0;
+    final arrowColor = MyTheme.accent;
+    return Center(
+      child: SizedBox(
+        width: 76,
+        height: 76,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            touchIcon,
+            Positioned(
+              top: 0,
+              child: Icon(
+                Icons.keyboard_arrow_up,
+                color: arrowColor,
+                size: arrowSize,
+              ),
+            ),
+            Positioned(
+              bottom: 0,
+              child: Icon(
+                Icons.keyboard_arrow_down,
+                color: arrowColor,
+                size: arrowSize,
+              ),
+            ),
+            Positioned(
+              left: 0,
+              child: Icon(
+                Icons.keyboard_arrow_left,
+                color: arrowColor,
+                size: arrowSize,
+              ),
+            ),
+            Positioned(
+              right: 0,
+              child: Icon(
+                Icons.keyboard_arrow_right,
+                color: arrowColor,
+                size: arrowSize,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buttonArea({
     required Widget child,
     required VoidCallback onTap,
@@ -714,15 +870,18 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
 
   Widget _wheelArea() {
     return Expanded(
-      child: GestureDetector(
+      child: Listener(
         behavior: HitTestBehavior.opaque,
-        onPanUpdate: (details) => _sendTrackpadScroll(details.delta),
+        onPointerDown: _startWheelLongPressTimer,
+        onPointerMove: _moveWheelPointer,
+        onPointerUp: _endWheelPointer,
+        onPointerCancel: _cancelWheelPointer,
         child: Tooltip(
           message: translate('Mouse Wheel'),
           child: Center(
             child: Icon(
               Icons.unfold_more,
-              color: Colors.white70,
+              color: _wheelScrollModeActive ? MyTheme.accent : Colors.white70,
               size: 22,
             ),
           ),
@@ -751,13 +910,7 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
               onPointerMove: _movePointer,
               onPointerUp: _endPointer,
               onPointerCancel: _endPointer,
-              child: const Center(
-                child: Icon(
-                  Icons.touch_app,
-                  color: Colors.white70,
-                  size: 36,
-                ),
-              ),
+              child: _trackpadCenterIcon(),
             ),
           ),
           const Divider(height: 1, color: Color(0xFF2F3337)),
