@@ -61,3 +61,13 @@ flutter/web/
 key.properties
 *.jks
 .dev/keystores/
+
+# Android Fold local build outputs
+/flutter/.dart_tool/
+/flutter/.flutter-plugins
+/flutter/.flutter-plugins-dependencies
+/flutter/build/
+/flutter/android/.gradle/
+/flutter/android/build/
+/flutter/android/app/build/
+/flutter/android/app/src/main/jniLibs/
