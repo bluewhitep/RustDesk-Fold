@@ -9,6 +9,8 @@ on:
 jobs:
   run-flutter-nightly-build:
     uses: ./.github/workflows/flutter-build.yml
+    permissions:
+      contents: write
     secrets: inherit
     with:
       upload-artifact: true
