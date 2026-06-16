@@ -1,3 +1,7 @@
+# Dotfiles and dot directories are local-only; keep ignore files tracked.
+.*
+!.gitignore
+
 /build
 /target
 .vscode
