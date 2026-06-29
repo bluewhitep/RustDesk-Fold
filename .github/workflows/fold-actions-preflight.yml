@@ -14,7 +14,7 @@ permissions: {}
 jobs:
   preflight:
     name: Read-only runner preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Report trigger context
         run: |
