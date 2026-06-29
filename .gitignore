@@ -1,6 +1,11 @@
 # Dotfiles and dot directories are local-only; keep ignore files tracked.
 .*
 !.gitignore
+!.github/
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/fold-upstream-auto-update.yml
 
 /build
 /target
