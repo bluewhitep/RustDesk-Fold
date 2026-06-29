@@ -49,8 +49,19 @@ env:
   ANDROID_BUILD_TOOLS: "35.0.0"
 
 jobs:
+  validate-workflow:
+    name: Validate workflow wiring
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report trigger context
+        run: |
+          echo "event=${{ github.event_name }}"
+          echo "ref=${{ github.ref }}"
+          echo "sha=${{ github.sha }}"
+
   update-build-pr:
     name: Rebase Fold branch onto latest RustDesk tag
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
