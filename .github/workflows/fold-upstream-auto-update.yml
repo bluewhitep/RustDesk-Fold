@@ -1,5 +1,5 @@
 name: Fold Upstream Auto Update
-run-name: Fold upstream auto update to ${{ inputs.upstream_tag || 'latest tag' }}
+run-name: Fold upstream auto update (${{ github.event_name }})
 
 on:
   # Keep this narrow push trigger so workflow edits validate themselves.
@@ -108,7 +108,7 @@ jobs:
             exit 1
           fi
 
-          requested_tag="${{ inputs.upstream_tag }}"
+          requested_tag="${{ github.event.inputs.upstream_tag || '' }}"
           if [ -n "$requested_tag" ]; then
             latest_tag="$requested_tag"
           else
@@ -128,7 +128,7 @@ jobs:
           git rev-parse --verify "$latest_tag^{}" >/dev/null
 
           update_needed=false
-          if [ "$current_version" != "$latest_tag" ] || [ "${{ inputs.force }}" = "true" ]; then
+          if [ "$current_version" != "$latest_tag" ] || [ "${{ github.event.inputs.force || 'false' }}" = "true" ]; then
             update_needed=true
           fi
 
