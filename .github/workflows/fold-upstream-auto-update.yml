@@ -2,6 +2,11 @@ name: Fold Upstream Auto Update
 run-name: Fold upstream auto update to ${{ inputs.upstream_tag || 'latest tag' }}
 
 on:
+  push:
+    branches:
+      - foldable-split-keyboard-dev
+    paths:
+      - ".github/workflows/fold-upstream-auto-update.yml"
   schedule:
     - cron: "17 20 * * *"
   workflow_dispatch:
@@ -137,6 +142,22 @@ jobs:
       - name: Stop when already current
         if: steps.version.outputs.update_needed != 'true'
         run: echo "Fold branch already reports RustDesk ${{ steps.version.outputs.latest_tag }}; nothing to do."
+
+      - name: Check Android release signing secrets
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.FOLD_ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.FOLD_ANDROID_KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.FOLD_ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.FOLD_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEY_ALIAS" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "Missing Fold Android signing secrets." >&2
+            echo "Required: FOLD_ANDROID_KEYSTORE_BASE64, FOLD_ANDROID_KEY_ALIAS, FOLD_ANDROID_STORE_PASSWORD, FOLD_ANDROID_KEY_PASSWORD" >&2
+            exit 1
+          fi
 
       - name: Rebase Fold patch stack
         if: steps.version.outputs.update_needed == 'true'
