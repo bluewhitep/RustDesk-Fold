@@ -2,7 +2,7 @@ name: Fold Upstream Auto Update
 run-name: Fold upstream auto update to ${{ inputs.upstream_tag || 'latest tag' }}
 
 on:
-  # Keep this narrow push trigger so workflow edits validate themselves.
+  # Narrow validation triggers keep workflow edits observable without running on normal code changes.
   push:
     branches:
       - foldable-split-keyboard-dev
