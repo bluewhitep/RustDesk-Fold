@@ -54,6 +54,28 @@ The release APK is generated at:
 flutter/build/app/outputs/flutter-apk/app-release.apk
 ```
 
+## GitHub Auto Update
+
+The default branch includes `.github/workflows/fold-upstream-auto-update.yml`.
+It checks official RustDesk tags on a daily schedule and can also be started
+manually from GitHub Actions. When a newer tag is found, the workflow rebases
+the Fold branch, builds the Android arm64 release APK, uploads the APK artifact,
+and opens or updates an upstream-sync pull request.
+
+Configure these repository secrets before expecting the workflow to complete a
+signed release build:
+
+```text
+FOLD_ANDROID_KEYSTORE_BASE64
+FOLD_ANDROID_KEY_ALIAS
+FOLD_ANDROID_STORE_PASSWORD
+FOLD_ANDROID_KEY_PASSWORD
+```
+
+The workflow intentionally fails fast when any signing secret is missing. This
+keeps cloud builds aligned with the release-only install policy below instead
+of silently falling back to debug signing.
+
 ## Device Install Policy
 
 Do not install debug APKs for this fork. For device testing, keep app data and
