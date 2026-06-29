@@ -51,7 +51,7 @@ env:
 jobs:
   update-build-pr:
     name: Rebase Fold branch onto latest RustDesk tag
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 180
 
     steps:
