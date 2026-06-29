@@ -1,0 +1,378 @@
+name: Fold Upstream Auto Update
+run-name: Fold upstream auto update to ${{ inputs.upstream_tag || 'latest tag' }}
+
+on:
+  schedule:
+    - cron: "17 20 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "Official RustDesk tag to try, for example 1.4.8. Empty means latest semver tag."
+        required: false
+        type: string
+      force:
+        description: "Run even when the Fold branch already reports the same version."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: fold-upstream-auto-update
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/rustdesk/rustdesk.git
+  FOLD_BRANCH: foldable-split-keyboard-dev
+  UPDATE_BRANCH_PREFIX: chore/update-rustdesk
+  FLUTTER_VERSION: "3.24.5"
+  RUST_VERSION: "1.75.0"
+  CARGO_NDK_VERSION: "3.1.2"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  ANDROID_NDK_VERSION: "28.2.13676358"
+  ANDROID_PLATFORM: "android-35"
+  ANDROID_BUILD_TOOLS: "35.0.0"
+
+jobs:
+  update-build-pr:
+    name: Rebase Fold branch onto latest RustDesk tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout Fold branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FOLD_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install Ubuntu build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            cmake \
+            curl \
+            g++ \
+            git \
+            libclang-dev \
+            llvm-dev \
+            ninja-build \
+            pkg-config \
+            wget
+
+      - name: Configure Git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch official RustDesk tags
+        run: |
+          git remote add upstream "$UPSTREAM_URL" || git remote set-url upstream "$UPSTREAM_URL"
+          git fetch upstream --tags --force
+
+      - name: Resolve upstream version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_version="$(awk '/^version: / { split($2, parts, "+"); print parts[1]; exit }' flutter/pubspec.yaml)"
+          if [ -z "$current_version" ]; then
+            echo "Could not read current version from flutter/pubspec.yaml" >&2
+            exit 1
+          fi
+
+          requested_tag="${{ inputs.upstream_tag }}"
+          if [ -n "$requested_tag" ]; then
+            latest_tag="$requested_tag"
+          else
+            latest_tag="$(
+              git tag -l |
+                grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' |
+                sort -V |
+                tail -n 1
+            )"
+          fi
+          if [ -z "$latest_tag" ]; then
+            echo "Could not resolve a RustDesk upstream semver tag" >&2
+            exit 1
+          fi
+
+          git rev-parse --verify "$current_version^{}" >/dev/null
+          git rev-parse --verify "$latest_tag^{}" >/dev/null
+
+          update_needed=false
+          if [ "$current_version" != "$latest_tag" ] || [ "${{ inputs.force }}" = "true" ]; then
+            update_needed=true
+          fi
+
+          update_branch="$UPDATE_BRANCH_PREFIX-${latest_tag//./-}"
+
+          {
+            echo "current_version=$current_version"
+            echo "latest_tag=$latest_tag"
+            echo "update_branch=$update_branch"
+            echo "update_needed=$update_needed"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Current Fold version: $current_version"
+          echo "Latest upstream tag:  $latest_tag"
+          echo "Update needed:        $update_needed"
+
+      - name: Stop when already current
+        if: steps.version.outputs.update_needed != 'true'
+        run: echo "Fold branch already reports RustDesk ${{ steps.version.outputs.latest_tag }}; nothing to do."
+
+      - name: Rebase Fold patch stack
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          branch="${{ steps.version.outputs.update_branch }}"
+          current="${{ steps.version.outputs.current_version }}"
+          latest="${{ steps.version.outputs.latest_tag }}"
+
+          git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" || true
+          git switch -C "$branch"
+          set +e
+          git rebase --onto "$latest" "$current"
+          rebase_status=$?
+          set -e
+
+          while [ "$rebase_status" -ne 0 ]; do
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            if [ -z "$conflicts" ]; then
+              exit "$rebase_status"
+            fi
+
+            non_dot_conflicts="$(
+              printf '%s\n' "$conflicts" |
+                grep -Ev '(^|/)\.[^/]+($|/)' || true
+            )"
+            protected_dot_conflicts="$(
+              printf '%s\n' "$conflicts" |
+                grep -E '^\.gitignore$|^\.github/workflows/fold-upstream-auto-update\.yml$|(^|/)\.gitignore$' || true
+            )"
+            if [ -n "$non_dot_conflicts" ] || [ -n "$protected_dot_conflicts" ]; then
+              echo "Rebase has conflicts that require manual resolution:" >&2
+              printf '%s\n' "$conflicts" >&2
+              exit "$rebase_status"
+            fi
+
+            echo "Auto-resolving dotfile/dotdir tracking conflicts:"
+            printf '%s\n' "$conflicts"
+            while IFS= read -r path; do
+              [ -z "$path" ] && continue
+              git rm --cached -f "$path"
+            done <<< "$conflicts"
+
+            set +e
+            GIT_EDITOR=true git rebase --continue
+            rebase_status=$?
+            set -e
+          done
+
+          tracked_dotfiles="$(
+            git ls-files |
+              grep -E '(^|/)\.[^/]+($|/)' |
+              grep -Ev '^\.gitignore$|(^|/)\.gitignore$|^\.github/workflows/fold-upstream-auto-update\.yml$' || true
+          )"
+          if [ -n "$tracked_dotfiles" ]; then
+            echo "Removing upstream dotfile/dotdir paths from tracking:"
+            printf '%s\n' "$tracked_dotfiles"
+            while IFS= read -r path; do
+              [ -z "$path" ] && continue
+              git rm --cached -f "$path"
+            done <<< "$tracked_dotfiles"
+            git commit -m "chore: stop tracking upstream dotfiles"
+          fi
+
+          echo "Range diff against previous Fold stack:"
+          git range-diff "$current..${{ github.sha }}" "$latest..HEAD" || true
+
+      - name: Set up Java
+        if: steps.version.outputs.update_needed == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK packages
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platforms;$ANDROID_PLATFORM" \
+            "build-tools;$ANDROID_BUILD_TOOLS" \
+            "ndk;$ANDROID_NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Set up vcpkg
+        if: steps.version.outputs.update_needed == 'true'
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Set up Flutter
+        if: steps.version.outputs.update_needed == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Rust
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          rustup target add aarch64-linux-android
+          cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
+
+      - name: Write Android local properties
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter_sdk="$(dirname "$(dirname "$(command -v flutter)")")"
+          version="$(awk '/^version: / { print $2; exit }' flutter/pubspec.yaml)"
+          version_name="${version%%+*}"
+          version_code="${version#*+}"
+          if [ "$version_code" = "$version" ]; then
+            version_code="1"
+          fi
+          {
+            printf 'sdk.dir=%s\n' "$ANDROID_HOME"
+            printf 'flutter.sdk=%s\n' "$flutter_sdk"
+            printf 'flutter.buildMode=release\n'
+            printf 'flutter.versionName=%s\n' "$version_name"
+            printf 'flutter.versionCode=%s\n' "$version_code"
+          } > flutter/android/local.properties
+
+      - name: Build Android native dependencies
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./flutter/build_android_deps.sh arm64-v8a
+
+      - name: Configure Android release signing
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.FOLD_ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.FOLD_ANDROID_KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.FOLD_ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.FOLD_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEY_ALIAS" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "Missing Fold Android signing secrets." >&2
+            echo "Required: FOLD_ANDROID_KEYSTORE_BASE64, FOLD_ANDROID_KEY_ALIAS, FOLD_ANDROID_STORE_PASSWORD, FOLD_ANDROID_KEY_PASSWORD" >&2
+            exit 1
+          fi
+
+          mkdir -p .dev/keystores
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > .dev/keystores/fold-release.jks
+          {
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'storeFile=%s/.dev/keystores/fold-release.jks\n' "${{ github.workspace }}"
+          } > .dev/keystores/key.properties
+
+      - name: Flutter pub get
+        if: steps.version.outputs.update_needed == 'true'
+        working-directory: flutter
+        run: flutter pub get
+
+      - name: Flutter analyze
+        if: steps.version.outputs.update_needed == 'true'
+        working-directory: flutter
+        run: flutter analyze
+
+      - name: Build arm64 release APK
+        if: steps.version.outputs.update_needed == 'true'
+        env:
+          CARGO_TARGET_DIR: /tmp/rustdesk-fold-cargo-target
+        run: bash tools/dev/build_android_arm64_release.sh
+
+      - name: Verify APK identity
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="flutter/build/app/outputs/flutter-apk/app-release.apk"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest application-id "$apk" | grep -Fx "com.rustdesk.fold"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest target-sdk "$apk" | grep -Fx "35"
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep "application-label:'RustDesk Fold'"
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt" dump badging "$apk" | grep "native-code: 'arm64-v8a'"
+          "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner" verify --verbose "$apk"
+
+      - name: Upload release APK
+        if: steps.version.outputs.update_needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-fold-${{ steps.version.outputs.latest_tag }}-arm64-release-apk
+          path: flutter/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 14
+
+      - name: Push update branch
+        if: steps.version.outputs.update_needed == 'true'
+        run: git push --force-with-lease origin HEAD:${{ steps.version.outputs.update_branch }}
+
+      - name: Open or update pull request
+        if: steps.version.outputs.update_needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH_NAME: ${{ steps.version.outputs.update_branch }}
+          LATEST_TAG: ${{ steps.version.outputs.latest_tag }}
+          CURRENT_VERSION: ${{ steps.version.outputs.current_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="chore: update RustDesk upstream to $LATEST_TAG"
+          body="$(
+            printf 'Automated upstream update for RustDesk Fold.\n\n'
+            printf -- '- Previous Fold upstream baseline: %s\n' "$CURRENT_VERSION"
+            printf -- '- New official RustDesk tag: %s\n' "$LATEST_TAG"
+            printf -- '- Fold base branch: %s\n' "$FOLD_BRANCH"
+            printf -- '- Validation: flutter pub get, flutter analyze, arm64 release APK build, APK identity/signing checks\n'
+            printf -- '- Artifact: rustdesk-fold-%s-arm64-release-apk\n\n' "$LATEST_TAG"
+            printf 'If this PR is absent and the workflow failed earlier, inspect the Actions log; rebase conflicts are intentionally left for manual resolution.\n'
+          )"
+
+          if gh pr view "$BRANCH_NAME" --json url --jq .url >/tmp/pr-url 2>/dev/null; then
+            pr_url="$(cat /tmp/pr-url)"
+            gh pr edit "$BRANCH_NAME" --title "$title" --body "$body"
+            echo "Updated existing PR: $pr_url"
+          else
+            gh pr create \
+              --base "$FOLD_BRANCH" \
+              --head "$BRANCH_NAME" \
+              --title "$title" \
+              --body "$body"
+          fi
