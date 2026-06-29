@@ -8,6 +8,11 @@ on:
       - foldable-split-keyboard-dev
     paths:
       - ".github/workflows/fold-upstream-auto-update.yml"
+  pull_request:
+    branches:
+      - foldable-split-keyboard-dev
+    paths:
+      - ".github/workflows/fold-upstream-auto-update.yml"
   schedule:
     - cron: "17 20 * * *"
   workflow_dispatch:
