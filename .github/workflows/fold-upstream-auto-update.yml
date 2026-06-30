@@ -46,6 +46,8 @@ env:
   RUSTUP_HOME: /tmp/rustdesk-fold-rustup
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   VCPKG_ROOT: /tmp/rustdesk-fold-vcpkg
+  NASM_VERSION: "2.16.03"
+  NASM_ROOT: /tmp/rustdesk-fold-nasm
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   ANDROID_NDK_VERSION: "28.2.13676358"
   ANDROID_PLATFORM: "android-35"
@@ -293,7 +295,6 @@ jobs:
             git
             libclang-dev
             llvm-dev
-            nasm
             ninja-build
             pkg-config
             unzip
@@ -322,6 +323,33 @@ jobs:
 
           sudo -n apt-get update
           sudo -n apt-get install -y "${missing_packages[@]}"
+
+      - name: Set up NASM
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nasm >/dev/null 2>&1; then
+            if [ ! -x "$NASM_ROOT/bin/nasm" ]; then
+              archive="$RUNNER_TEMP/nasm-$NASM_VERSION.tar.xz"
+              source_dir="$RUNNER_TEMP/nasm-src"
+              rm -rf "$source_dir" "$NASM_ROOT"
+              mkdir -p "$source_dir" "$NASM_ROOT"
+              curl -fsSL \
+                "https://www.nasm.us/pub/nasm/releasebuilds/${NASM_VERSION}/nasm-${NASM_VERSION}.tar.xz" \
+                -o "$archive"
+              tar -xJf "$archive" -C "$source_dir" --strip-components=1
+              (
+                cd "$source_dir"
+                ./configure --prefix="$NASM_ROOT"
+                make -j"$(nproc)"
+                make install
+              )
+            fi
+            echo "$NASM_ROOT/bin" >> "$GITHUB_PATH"
+            export PATH="$NASM_ROOT/bin:$PATH"
+          fi
+          nasm -v
 
       - name: Set up Java
         if: steps.version.outputs.update_needed == 'true'
