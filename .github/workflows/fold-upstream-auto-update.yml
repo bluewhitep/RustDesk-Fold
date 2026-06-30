@@ -43,6 +43,7 @@ env:
   RUST_VERSION: "1.75.0"
   CARGO_NDK_VERSION: "3.1.2"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_ROOT: /tmp/rustdesk-fold-vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   ANDROID_NDK_VERSION: "28.2.13676358"
   ANDROID_PLATFORM: "android-35"
@@ -81,6 +82,7 @@ jobs:
           git_config="$RUNNER_TEMP/gitconfig"
           touch "$git_config"
           git config --file "$git_config" --add safe.directory "$GITHUB_WORKSPACE"
+          git config --file "$git_config" --add safe.directory "$VCPKG_ROOT"
           echo "GIT_CONFIG_GLOBAL=$git_config" >> "$GITHUB_ENV"
           export GIT_CONFIG_GLOBAL="$git_config"
           git config user.name "github-actions[bot]"
@@ -373,7 +375,7 @@ jobs:
         if: steps.version.outputs.update_needed == 'true'
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
-          vcpkgDirectory: ${{ runner.tool_cache }}/vcpkg
+          vcpkgDirectory: ${{ env.VCPKG_ROOT }}
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
           doNotCache: false
 
