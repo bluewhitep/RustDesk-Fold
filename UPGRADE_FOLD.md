@@ -8,7 +8,7 @@ every upstream sync.
 
 ## Current Branch Shape
 
-- Active Fold branch: `foldable-split-keyboard-dev`
+- Active Fold branch: `foldable-split-keyboard-main`
 - Official upstream remote: `origin` (`https://github.com/rustdesk/rustdesk.git`)
 - Personal push remote: `github`
 - Manual backup remote: `backup`
@@ -58,7 +58,7 @@ git merge --ff-only origin/master
 Rebase the Fold branch onto the new official base:
 
 ```bash
-git checkout foldable-split-keyboard-dev
+git checkout foldable-split-keyboard-main
 git rebase master
 ```
 

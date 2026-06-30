@@ -5,12 +5,12 @@ on:
   # Keep this narrow push trigger so workflow edits validate themselves.
   push:
     branches:
-      - foldable-split-keyboard-dev
+      - foldable-split-keyboard-main
     paths:
       - ".github/workflows/fold-upstream-auto-update.yml"
   pull_request:
     branches:
-      - foldable-split-keyboard-dev
+      - foldable-split-keyboard-main
     paths:
       - ".github/workflows/fold-upstream-auto-update.yml"
   schedule:
@@ -38,7 +38,7 @@ concurrency:
 env:
   UPSTREAM_URL: https://github.com/rustdesk/rustdesk.git
   HBB_COMMON_URL: https://github.com/rustdesk/hbb_common.git
-  FOLD_BRANCH: foldable-split-keyboard-dev
+  FOLD_BRANCH: foldable-split-keyboard-main
   UPDATE_BRANCH_PREFIX: chore/update-rustdesk
   CI_PATH_ROOT: /tmp/rustdesk-fold-ci
   FLUTTER_VERSION: "3.24.5"

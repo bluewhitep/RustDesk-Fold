@@ -62,6 +62,11 @@ manually from GitHub Actions. When a newer tag is found, the workflow rebases
 the Fold branch, builds the Android arm64 release APK, uploads the APK artifact,
 and opens or updates an upstream-sync pull request.
 
+The active Fold branch is `foldable-split-keyboard-main`. See
+[UPSTREAM_RELEASE_WORKFLOW.md](UPSTREAM_RELEASE_WORKFLOW.md) for the maintained
+upstream update, self-hosted runner validation, merge, tag, and GitHub Release
+process.
+
 Configure these repository secrets before expecting the workflow to complete a
 signed release build:
 
