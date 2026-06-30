@@ -454,6 +454,7 @@ jobs:
           fi
           rustup toolchain install "$RUST_VERSION" --profile minimal
           rustup default "$RUST_VERSION"
+          rustup component add rustfmt
           rustup target add aarch64-linux-android
           if ! cargo ndk --version 2>/dev/null | grep -q "cargo-ndk $CARGO_NDK_VERSION"; then
             cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
