@@ -474,6 +474,7 @@ jobs:
             fi
             rm -rf libs/hbb_common
             git clone --no-checkout --filter=blob:none "$HBB_COMMON_URL" libs/hbb_common
+            git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$GITHUB_WORKSPACE/libs/hbb_common"
             git -C libs/hbb_common fetch --depth 1 origin "$hbb_common_sha"
             git -C libs/hbb_common checkout --detach FETCH_HEAD
             rm -rf libs/hbb_common/.git
