@@ -74,7 +74,14 @@ jobs:
           persist-credentials: true
 
       - name: Configure Git author
+        shell: bash
         run: |
+          set -euo pipefail
+          git_config="$RUNNER_TEMP/gitconfig"
+          touch "$git_config"
+          git config --file "$git_config" --add safe.directory "$GITHUB_WORKSPACE"
+          echo "GIT_CONFIG_GLOBAL=$git_config" >> "$GITHUB_ENV"
+          export GIT_CONFIG_GLOBAL="$git_config"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
