@@ -602,6 +602,7 @@ jobs:
             printf 'keyAlias=%s\n' "$KEY_ALIAS"
             printf 'storeFile=%s/.dev/keystores/fold-release.jks\n' "$BUILD_WORKSPACE"
           } > .dev/keystores/key.properties
+          cp .dev/keystores/key.properties flutter/android/key.properties
 
       - name: Flutter pub get
         if: steps.version.outputs.update_needed == 'true'
