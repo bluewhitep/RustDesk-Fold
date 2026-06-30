@@ -37,6 +37,7 @@ concurrency:
 
 env:
   UPSTREAM_URL: https://github.com/rustdesk/rustdesk.git
+  HBB_COMMON_URL: https://github.com/rustdesk/hbb_common.git
   FOLD_BRANCH: foldable-split-keyboard-dev
   UPDATE_BRANCH_PREFIX: chore/update-rustdesk
   FLUTTER_VERSION: "3.24.5"
@@ -465,8 +466,21 @@ jobs:
           set -euo pipefail
           rm -rf "$BUILD_WORKSPACE"
           mkdir -p "$BUILD_WORKSPACE"
+          if [ ! -f libs/hbb_common/Cargo.toml ]; then
+            hbb_common_sha="$(git ls-files -s libs/hbb_common | awk '{ print $2; exit }')"
+            if [ -z "$hbb_common_sha" ]; then
+              echo "Could not resolve libs/hbb_common gitlink SHA." >&2
+              exit 1
+            fi
+            rm -rf libs/hbb_common
+            git clone --no-checkout --filter=blob:none "$HBB_COMMON_URL" libs/hbb_common
+            git -C libs/hbb_common fetch --depth 1 origin "$hbb_common_sha"
+            git -C libs/hbb_common checkout --detach FETCH_HEAD
+            rm -rf libs/hbb_common/.git
+          fi
           rsync -a --delete \
             --exclude .git \
+            --exclude libs/hbb_common/.git \
             --exclude flutter/build \
             --exclude target \
             --exclude .dart_tool \
