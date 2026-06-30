@@ -306,11 +306,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager \
-            "platforms;$ANDROID_PLATFORM" \
-            "build-tools;$ANDROID_BUILD_TOOLS" \
-            "ndk;$ANDROID_NDK_VERSION"
+          sdkmanager_lock="${RUNNER_TEMP:-/tmp}/rustdesk-fold-sdkmanager.lock"
+          (
+            flock 9
+            if [ -S /tmp/sdkmanager.sock ] &&
+              ! pgrep -af '[s]dkmanager|com[.]android[.]sdklib[.]tool[.]sdkmanager' >/dev/null; then
+              echo "Removing stale sdkmanager socket."
+              rm -f /tmp/sdkmanager.sock
+            fi
+            yes | sdkmanager --licenses >/dev/null 2>&1 || true
+            sdkmanager \
+              "platforms;$ANDROID_PLATFORM" \
+              "build-tools;$ANDROID_BUILD_TOOLS" \
+              "ndk;$ANDROID_NDK_VERSION"
+          ) 9>"$sdkmanager_lock"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
 
