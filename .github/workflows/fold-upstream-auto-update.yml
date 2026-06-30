@@ -48,6 +48,7 @@ env:
   VCPKG_ROOT: /tmp/rustdesk-fold-vcpkg
   NASM_VERSION: "2.16.03"
   NASM_ROOT: /tmp/rustdesk-fold-nasm
+  BUILD_WORKSPACE: /tmp/rustdesk-fold-build-workspace
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   ANDROID_NDK_VERSION: "28.2.13676358"
   ANDROID_PLATFORM: "android-35"
@@ -452,8 +453,19 @@ jobs:
             cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
           fi
 
+      - name: Prepare path-safe build workspace
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$BUILD_WORKSPACE"
+          mkdir -p "$BUILD_WORKSPACE"
+          git archive --format=tar HEAD | tar -xf - -C "$BUILD_WORKSPACE"
+          echo "BUILD_WORKSPACE=$BUILD_WORKSPACE" >> "$GITHUB_ENV"
+
       - name: Write Android local properties
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -474,6 +486,7 @@ jobs:
 
       - name: Build Android native dependencies
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -481,6 +494,7 @@ jobs:
 
       - name: Configure Android release signing
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.FOLD_ANDROID_KEYSTORE_BASE64 }}
@@ -501,27 +515,29 @@ jobs:
             printf 'storePassword=%s\n' "$STORE_PASSWORD"
             printf 'keyPassword=%s\n' "$KEY_PASSWORD"
             printf 'keyAlias=%s\n' "$KEY_ALIAS"
-            printf 'storeFile=%s/.dev/keystores/fold-release.jks\n' "${{ github.workspace }}"
+            printf 'storeFile=%s/.dev/keystores/fold-release.jks\n' "$BUILD_WORKSPACE"
           } > .dev/keystores/key.properties
 
       - name: Flutter pub get
         if: steps.version.outputs.update_needed == 'true'
-        working-directory: flutter
+        working-directory: ${{ env.BUILD_WORKSPACE }}/flutter
         run: flutter pub get
 
       - name: Flutter analyze
         if: steps.version.outputs.update_needed == 'true'
-        working-directory: flutter
+        working-directory: ${{ env.BUILD_WORKSPACE }}/flutter
         run: flutter analyze
 
       - name: Build arm64 release APK
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         env:
           CARGO_TARGET_DIR: /tmp/rustdesk-fold-cargo-target
         run: bash tools/dev/build_android_arm64_release.sh
 
       - name: Verify APK identity
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -537,7 +553,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: rustdesk-fold-${{ steps.version.outputs.latest_tag }}-arm64-release-apk
-          path: flutter/build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ env.BUILD_WORKSPACE }}/flutter/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 14
 
       - name: Push update branch
