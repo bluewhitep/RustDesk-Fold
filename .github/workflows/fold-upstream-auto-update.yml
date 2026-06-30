@@ -303,6 +303,7 @@ jobs:
             llvm-dev
             ninja-build
             pkg-config
+            rsync
             unzip
             wget
             xz-utils
@@ -464,7 +465,17 @@ jobs:
           set -euo pipefail
           rm -rf "$BUILD_WORKSPACE"
           mkdir -p "$BUILD_WORKSPACE"
-          git archive --format=tar HEAD | tar -xf - -C "$BUILD_WORKSPACE"
+          rsync -a --delete \
+            --exclude .git \
+            --exclude flutter/build \
+            --exclude target \
+            --exclude .dart_tool \
+            ./ "$BUILD_WORKSPACE"/
+          if [ ! -f "$BUILD_WORKSPACE/libs/hbb_common/Cargo.toml" ]; then
+            echo "Missing libs/hbb_common checkout in the self-hosted runner workspace." >&2
+            echo "The repository contains libs/hbb_common as a gitlink without a .gitmodules URL." >&2
+            exit 1
+          fi
           env_stamp="$VCPKG_ROOT/.fold-android-env"
           new_stamp="$(printf 'android_home=%s\nbuild_workspace=%s\n' "$ANDROID_HOME" "$BUILD_WORKSPACE")"
           old_stamp="$(cat "$env_stamp" 2>/dev/null || true)"
