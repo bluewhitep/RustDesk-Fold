@@ -145,6 +145,7 @@ jobs:
             echo "latest_tag=$latest_tag"
             echo "update_branch=$update_branch"
             echo "update_branch_exists=$update_branch_exists"
+            echo "force_update=$force_update"
             echo "update_needed=$update_needed"
             echo "skip_reason=$skip_reason"
           } >> "$GITHUB_OUTPUT"
@@ -199,13 +200,21 @@ jobs:
           branch="${{ steps.version.outputs.update_branch }}"
           current="${{ steps.version.outputs.current_version }}"
           latest="${{ steps.version.outputs.latest_tag }}"
+          update_branch_exists="${{ steps.version.outputs.update_branch_exists }}"
+          force_update="${{ steps.version.outputs.force_update }}"
 
           git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" || true
-          git switch -C "$branch"
-          set +e
-          git rebase --onto "$latest" "$current"
-          rebase_status=$?
-          set -e
+          if [ "$update_branch_exists" = "true" ] && [ "$force_update" = "true" ]; then
+            echo "Using existing update branch $branch for forced rebuild."
+            git switch -C "$branch" "refs/remotes/origin/$branch"
+            rebase_status=0
+          else
+            git switch -C "$branch"
+            set +e
+            git rebase --onto "$latest" "$current"
+            rebase_status=$?
+            set -e
+          fi
 
           while [ "$rebase_status" -ne 0 ]; do
             conflicts="$(git diff --name-only --diff-filter=U)"
