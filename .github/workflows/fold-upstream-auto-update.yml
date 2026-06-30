@@ -280,19 +280,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang \
-            cmake \
-            curl \
-            g++ \
-            git \
-            libclang-dev \
-            llvm-dev \
-            ninja-build \
-            pkg-config \
-            wget \
+          required_packages=(
+            clang
+            cmake
+            curl
+            g++
+            git
+            libclang-dev
+            llvm-dev
+            ninja-build
+            pkg-config
+            wget
             xz-utils
+          )
+
+          missing_packages=()
+          for package in "${required_packages[@]}"; do
+            if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+              missing_packages+=("$package")
+            fi
+          done
+
+          if [ "${#missing_packages[@]}" -eq 0 ]; then
+            echo "Ubuntu build prerequisites are already installed."
+            exit 0
+          fi
+
+          if ! sudo -n true 2>/dev/null; then
+            echo "Missing Ubuntu build prerequisites: ${missing_packages[*]}" >&2
+            echo "Install them once on the self-hosted runner, then rerun this workflow:" >&2
+            echo "sudo apt-get update && sudo apt-get install -y ${missing_packages[*]}" >&2
+            exit 1
+          fi
+
+          sudo -n apt-get update
+          sudo -n apt-get install -y "${missing_packages[@]}"
 
       - name: Set up Java
         if: steps.version.outputs.update_needed == 'true'
