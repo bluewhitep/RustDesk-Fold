@@ -43,6 +43,8 @@ env:
   FLUTTER_ROOT: /tmp/rustdesk-fold-flutter
   RUST_VERSION: "1.75.0"
   CARGO_NDK_VERSION: "3.1.2"
+  CARGO_EXPAND_VERSION: "1.0.95"
+  FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
   CARGO_HOME: /tmp/rustdesk-fold-cargo
   RUSTUP_HOME: /tmp/rustdesk-fold-rustup
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
@@ -531,6 +533,27 @@ jobs:
         if: steps.version.outputs.update_needed == 'true'
         working-directory: ${{ env.BUILD_WORKSPACE }}/flutter
         run: flutter pub get
+
+      - name: Generate Flutter Rust bridge
+        if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$CARGO_HOME/bin:$PATH"
+          if ! cargo expand --version 2>/dev/null | grep -q "$CARGO_EXPAND_VERSION"; then
+            cargo install cargo-expand --version "$CARGO_EXPAND_VERSION" --locked
+          fi
+          if ! flutter_rust_bridge_codegen --version 2>/dev/null | grep -q "$FLUTTER_RUST_BRIDGE_VERSION"; then
+            cargo install flutter_rust_bridge_codegen --version "$FLUTTER_RUST_BRIDGE_VERSION" --features "uuid" --locked
+          fi
+          flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart \
+            --c-output ./flutter/macos/Runner/bridge_generated.h
+          if [ -d ./flutter/ios/Runner ]; then
+            cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h
+          fi
 
       - name: Flutter analyze
         if: steps.version.outputs.update_needed == 'true'
