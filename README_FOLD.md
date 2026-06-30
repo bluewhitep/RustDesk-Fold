@@ -34,6 +34,17 @@ This repository is intended to build a separate Android application:
   - drag the trackpad to send vertical/horizontal scroll
   - tap wheel area again to exit wheel-scroll mode
 
+## Project Documents
+
+Fold-specific process, release, upgrade, and maintenance documents are kept as
+root-level Markdown files in this repository. Add new Fold maintainer documents
+at the project root and link them from this section.
+
+- [UPSTREAM_RELEASE_WORKFLOW.md](UPSTREAM_RELEASE_WORKFLOW.md): upstream
+  auto-update, self-hosted runner validation, merge, tag, and GitHub Release
+  process.
+- [UPGRADE_FOLD.md](UPGRADE_FOLD.md): manual upstream rebase and upgrade flow.
+
 ## Build
 
 Install Flutter, Rust, `cargo-ndk`, and Android NDK first. `ANDROID_NDK_HOME`
