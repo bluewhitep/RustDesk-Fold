@@ -18,7 +18,7 @@ The Fold stack is currently expected to sit above `master` / `origin/master`.
 Before rebasing, confirm the tree is clean:
 
 ```bash
-cd /media/bluewhite/750\(1.2T\)/codex-ws/RustDesk-Android-Fold/rustdesk-fold
+cd <workspace>/rustdesk-fold
 git status
 git branch --show-current
 git log --oneline --decorate master..HEAD
@@ -41,7 +41,7 @@ git config --get rerere.enabled
 Capture the old patch stack before updating `master`:
 
 ```bash
-cd /media/bluewhite/750\(1.2T\)/codex-ws/RustDesk-Android-Fold/rustdesk-fold
+cd <workspace>/rustdesk-fold
 git status
 old_base=$(git merge-base master HEAD)
 old_head=$(git rev-parse HEAD)
@@ -84,7 +84,7 @@ Fold commit appears heavily rewritten, inspect the relevant file before building
 Run analysis and the arm64 release build from the repository root:
 
 ```bash
-cd /media/bluewhite/750\(1.2T\)/codex-ws/RustDesk-Android-Fold/rustdesk-fold
+cd <workspace>/rustdesk-fold
 cd flutter
 flutter analyze
 cd ..

@@ -1,9 +1,18 @@
 # Dotfiles and dot directories are local-only; keep ignore files tracked.
 .*
 !.gitignore
+.github/**
 !.github/
-.github/*
 !.github/workflows/
+!.github/workflows/*.yml
+!.github/workflows/*.yaml
+!.github/ISSUE_TEMPLATE/
+!.github/ISSUE_TEMPLATE/**
+!.github/PULL_REQUEST_TEMPLATE.md
+!.github/dependabot.yml
+!.github/CODEOWNERS
+
+# This fork only tracks the Fold upstream automation workflow.
 .github/workflows/*
 !.github/workflows/fold-upstream-auto-update.yml
 
