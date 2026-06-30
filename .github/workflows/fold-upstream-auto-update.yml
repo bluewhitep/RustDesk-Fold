@@ -42,6 +42,8 @@ env:
   FLUTTER_VERSION: "3.24.5"
   RUST_VERSION: "1.75.0"
   CARGO_NDK_VERSION: "3.1.2"
+  CARGO_HOME: /tmp/rustdesk-fold-cargo
+  RUSTUP_HOME: /tmp/rustdesk-fold-rustup
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   VCPKG_ROOT: /tmp/rustdesk-fold-vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
@@ -406,10 +408,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$CARGO_HOME" "$RUSTUP_HOME"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          if ! command -v rustup >/dev/null 2>&1; then
+            rustup_init="$RUNNER_TEMP/rustup-init.sh"
+            curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs -o "$rustup_init"
+            sh "$rustup_init" -y --no-modify-path --profile minimal --default-toolchain "$RUST_VERSION"
+          fi
           rustup toolchain install "$RUST_VERSION" --profile minimal
           rustup default "$RUST_VERSION"
           rustup target add aarch64-linux-android
-          cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
+          if ! cargo ndk --version 2>/dev/null | grep -q "cargo-ndk $CARGO_NDK_VERSION"; then
+            cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
+          fi
 
       - name: Write Android local properties
         if: steps.version.outputs.update_needed == 'true'
