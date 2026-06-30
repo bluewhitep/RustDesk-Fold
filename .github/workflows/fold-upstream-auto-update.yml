@@ -690,14 +690,22 @@ jobs:
 
           if gh pr view "$BRANCH_NAME" --json url --jq .url >/tmp/pr-url 2>/dev/null; then
             pr_url="$(cat /tmp/pr-url)"
-            gh pr edit "$BRANCH_NAME" --title "$title" --body "$body"
-            echo "Updated existing PR: $pr_url"
+            if gh pr edit "$BRANCH_NAME" --title "$title" --body "$body"; then
+              echo "Updated existing PR: $pr_url"
+            else
+              echo "::warning::Could not update PR $pr_url with the workflow token."
+              echo "Update branch was pushed successfully: $BRANCH_NAME"
+            fi
           else
-            gh pr create \
+            if ! gh pr create \
               --base "$FOLD_BRANCH" \
               --head "$BRANCH_NAME" \
               --title "$title" \
-              --body "$body"
+              --body "$body"; then
+              echo "::warning::Could not create PR with the workflow token."
+              echo "Update branch was pushed successfully: $BRANCH_NAME"
+              echo "Enable 'Allow GitHub Actions to create and approve pull requests' or create the PR manually."
+            fi
           fi
 
       - name: Prune path-sensitive tmp caches
