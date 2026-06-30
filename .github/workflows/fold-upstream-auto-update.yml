@@ -354,7 +354,7 @@ jobs:
             "$NASM_ROOT" \
             "$RUSTUP_HOME" \
             "$VCPKG_ROOT"
-          for safe_path in "$CI_PATH_ROOT" "$BUILD_WORKSPACE" "$VCPKG_ROOT"; do
+          for safe_path in "$CI_PATH_ROOT" "$BUILD_WORKSPACE" "$FLUTTER_ROOT" "$VCPKG_ROOT"; do
             real_safe_path="$(readlink -f "$safe_path")"
             git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$safe_path"
             git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$real_safe_path"
@@ -455,13 +455,17 @@ jobs:
           archive="$RUNNER_TEMP/flutter-${FLUTTER_VERSION}.tar.xz"
 
           if [ ! -x "$flutter_root/bin/flutter" ]; then
+            extract_dir="$RUNNER_TEMP/flutter-extract"
             rm -rf "$flutter_root"
+            rm -rf "$extract_dir"
             mkdir -p "$(dirname "$flutter_root")"
+            mkdir -p "$extract_dir"
             curl -fsSL \
               "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
               -o "$archive"
-            tar -xJf "$archive" -C "$(dirname "$flutter_root")"
-            mv "$(dirname "$flutter_root")/flutter" "$flutter_root"
+            tar -xJf "$archive" -C "$extract_dir"
+            mv "$extract_dir/flutter" "$flutter_root"
+            rm -rf "$extract_dir"
           fi
 
           echo "$flutter_root/bin" >> "$GITHUB_PATH"
