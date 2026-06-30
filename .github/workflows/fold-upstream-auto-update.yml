@@ -32,21 +32,36 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: fold-upstream-auto-update
+  group: fold-upstream-auto-update-${{ github.event_name }}
   cancel-in-progress: false
 
 env:
   UPSTREAM_URL: https://github.com/rustdesk/rustdesk.git
+  HBB_COMMON_URL: https://github.com/rustdesk/hbb_common.git
   FOLD_BRANCH: foldable-split-keyboard-dev
   UPDATE_BRANCH_PREFIX: chore/update-rustdesk
+  CI_PATH_ROOT: /tmp/rustdesk-fold-ci
   FLUTTER_VERSION: "3.24.5"
+  FLUTTER_ROOT: /tmp/rustdesk-fold-ci/flutter
   RUST_VERSION: "1.75.0"
   CARGO_NDK_VERSION: "3.1.2"
+  CARGO_EXPAND_VERSION: "1.0.95"
+  FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
+  CARGO_HOME: /tmp/rustdesk-fold-ci/cargo
+  RUSTUP_HOME: /tmp/rustdesk-fold-ci/rustup
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_ROOT: /tmp/rustdesk-fold-ci/vcpkg
+  NASM_VERSION: "2.16.03"
+  NASM_ROOT: /tmp/rustdesk-fold-ci/nasm
+  BUILD_WORKSPACE: /tmp/rustdesk-fold-ci/build-workspace
+  GRADLE_USER_HOME: /tmp/rustdesk-fold-ci/gradle
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   ANDROID_NDK_VERSION: "28.2.13676358"
+  ANDROID_HOME: /tmp/rustdesk-fold-ci/android-sdk
+  ANDROID_SDK_ROOT: /tmp/rustdesk-fold-ci/android-sdk
   ANDROID_PLATFORM: "android-35"
   ANDROID_BUILD_TOOLS: "35.0.0"
+  ANDROID_CMDLINE_TOOLS_VERSION: "14742923"
 
 jobs:
   validate-workflow:
@@ -61,7 +76,7 @@ jobs:
 
   update-build-pr:
     name: Rebase Fold branch onto latest RustDesk tag
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 180
 
@@ -80,6 +95,7 @@ jobs:
           git_config="$RUNNER_TEMP/gitconfig"
           touch "$git_config"
           git config --file "$git_config" --add safe.directory "$GITHUB_WORKSPACE"
+          git config --file "$git_config" --add safe.directory "$VCPKG_ROOT"
           echo "GIT_CONFIG_GLOBAL=$git_config" >> "$GITHUB_ENV"
           export GIT_CONFIG_GLOBAL="$git_config"
           git config user.name "github-actions[bot]"
@@ -145,6 +161,7 @@ jobs:
             echo "latest_tag=$latest_tag"
             echo "update_branch=$update_branch"
             echo "update_branch_exists=$update_branch_exists"
+            echo "force_update=$force_update"
             echo "update_needed=$update_needed"
             echo "skip_reason=$skip_reason"
           } >> "$GITHUB_OUTPUT"
@@ -199,8 +216,13 @@ jobs:
           branch="${{ steps.version.outputs.update_branch }}"
           current="${{ steps.version.outputs.current_version }}"
           latest="${{ steps.version.outputs.latest_tag }}"
+          update_branch_exists="${{ steps.version.outputs.update_branch_exists }}"
+          force_update="${{ steps.version.outputs.force_update }}"
 
           git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" || true
+          if [ "$update_branch_exists" = "true" ] && [ "$force_update" = "true" ]; then
+            echo "Rebuilding existing update branch $branch from the latest $FOLD_BRANCH state."
+          fi
           git switch -C "$branch"
           set +e
           git rebase --onto "$latest" "$current"
@@ -271,19 +293,104 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang \
-            cmake \
-            curl \
-            g++ \
-            git \
-            libclang-dev \
-            llvm-dev \
-            ninja-build \
-            pkg-config \
-            wget \
+          required_packages=(
+            clang
+            cmake
+            curl
+            g++
+            git
+            libclang-dev
+            llvm-dev
+            ninja-build
+            pkg-config
+            rsync
+            unzip
+            wget
             xz-utils
+          )
+
+          missing_packages=()
+          for package in "${required_packages[@]}"; do
+            if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+              missing_packages+=("$package")
+            fi
+          done
+
+          if [ "${#missing_packages[@]}" -eq 0 ]; then
+            echo "Ubuntu build prerequisites are already installed."
+            exit 0
+          fi
+
+          if ! sudo -n true 2>/dev/null; then
+            echo "Missing Ubuntu build prerequisites: ${missing_packages[*]}" >&2
+            echo "Install them once on the self-hosted runner, then rerun this workflow:" >&2
+            echo "sudo apt-get update && sudo apt-get install -y ${missing_packages[*]}" >&2
+            exit 1
+          fi
+
+          sudo -n apt-get update
+          sudo -n apt-get install -y "${missing_packages[@]}"
+
+      - name: Prepare runner storage
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage_root="${RUNNER_WORKSPACE:-$(dirname "$GITHUB_WORKSPACE")}/_ci-cache"
+          mkdir -p "$storage_root"
+          if [ -L "$CI_PATH_ROOT" ]; then
+            rm -f "$CI_PATH_ROOT"
+          fi
+          if [ -e "$CI_PATH_ROOT" ] && [ ! -d "$CI_PATH_ROOT" ]; then
+            rm -rf "$CI_PATH_ROOT"
+          fi
+          rm -rf "$CI_PATH_ROOT/cargo" "$CI_PATH_ROOT/rustup"
+          mkdir -p \
+            "$ANDROID_HOME" \
+            "$BUILD_WORKSPACE" \
+            "$FLUTTER_ROOT" \
+            "$NASM_ROOT" \
+            "$VCPKG_ROOT" \
+            "$VCPKG_ROOT/downloads/git-tmp" \
+            "$CI_PATH_ROOT/cargo-target" \
+            "$storage_root/cargo" \
+            "$storage_root/gradle" \
+            "$storage_root/rustup"
+          echo "CARGO_HOME=$storage_root/cargo" >> "$GITHUB_ENV"
+          echo "GRADLE_USER_HOME=$storage_root/gradle" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$storage_root/rustup" >> "$GITHUB_ENV"
+          for safe_path in "$CI_PATH_ROOT" "$BUILD_WORKSPACE" "$FLUTTER_ROOT" "$VCPKG_ROOT" "$VCPKG_ROOT/downloads/git-tmp"; do
+            real_safe_path="$(readlink -f "$safe_path")"
+            git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$safe_path"
+            git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$real_safe_path"
+          done
+
+      - name: Set up NASM
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v nasm >/dev/null 2>&1; then
+            if [ ! -x "$NASM_ROOT/bin/nasm" ]; then
+              archive="$RUNNER_TEMP/nasm-$NASM_VERSION.tar.xz"
+              source_dir="$RUNNER_TEMP/nasm-src"
+              rm -rf "$source_dir" "$NASM_ROOT"
+              mkdir -p "$source_dir" "$NASM_ROOT"
+              curl -fsSL \
+                "https://www.nasm.us/pub/nasm/releasebuilds/${NASM_VERSION}/nasm-${NASM_VERSION}.tar.xz" \
+                -o "$archive"
+              tar -xJf "$archive" -C "$source_dir" --strip-components=1
+              (
+                cd "$source_dir"
+                ./configure --prefix="$NASM_ROOT"
+                make -j"$(nproc)"
+                make install
+              )
+            fi
+            echo "$NASM_ROOT/bin" >> "$GITHUB_PATH"
+            export PATH="$NASM_ROOT/bin:$PATH"
+          fi
+          nasm -v
 
       - name: Set up Java
         if: steps.version.outputs.update_needed == 'true'
@@ -297,19 +404,49 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager \
-            "platforms;$ANDROID_PLATFORM" \
-            "build-tools;$ANDROID_BUILD_TOOLS" \
-            "ndk;$ANDROID_NDK_VERSION"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          runner_temp="${RUNNER_TEMP:-/tmp}"
+          android_home="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$CI_PATH_ROOT/android-sdk}}"
+          sdkmanager_bin="$android_home/cmdline-tools/latest/bin/sdkmanager"
+          sdkmanager_lock="${RUNNER_TEMP:-/tmp}/rustdesk-fold-sdkmanager.lock"
+          (
+            flock 9
+            if [ -S /tmp/sdkmanager.sock ] &&
+              ! pgrep -af '[s]dkmanager|com[.]android[.]sdklib[.]tool[.]sdkmanager' >/dev/null; then
+              echo "Removing stale sdkmanager socket."
+              rm -f /tmp/sdkmanager.sock
+            fi
+
+            if ! [ -x "$sdkmanager_bin" ] || ! "$sdkmanager_bin" --version >/dev/null 2>&1; then
+              cmdline_zip="$runner_temp/android-commandlinetools-linux-$ANDROID_CMDLINE_TOOLS_VERSION.zip"
+              tmp_tools="$runner_temp/android-cmdline-tools"
+              rm -rf "$tmp_tools" "$android_home/cmdline-tools/latest"
+              mkdir -p "$tmp_tools" "$android_home/cmdline-tools/latest"
+              curl -fsSL \
+                "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS_VERSION}_latest.zip" \
+                -o "$cmdline_zip"
+              unzip -q "$cmdline_zip" -d "$tmp_tools"
+              mv "$tmp_tools/cmdline-tools"/* "$android_home/cmdline-tools/latest/"
+            fi
+
+            export ANDROID_HOME="$android_home"
+            export ANDROID_SDK_ROOT="$android_home"
+            yes | "$sdkmanager_bin" --sdk_root="$android_home" --licenses >/dev/null 2>&1 || true
+            "$sdkmanager_bin" --sdk_root="$android_home" "platforms;$ANDROID_PLATFORM"
+            "$sdkmanager_bin" --sdk_root="$android_home" "build-tools;$ANDROID_BUILD_TOOLS"
+            "$sdkmanager_bin" --sdk_root="$android_home" "ndk;$ANDROID_NDK_VERSION"
+          ) 9>"$sdkmanager_lock"
+          echo "ANDROID_HOME=$android_home" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$android_home" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$android_home/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$android_home/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "$android_home/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$android_home/platform-tools" >> "$GITHUB_PATH"
 
       - name: Set up vcpkg
         if: steps.version.outputs.update_needed == 'true'
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
-          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgDirectory: ${{ env.VCPKG_ROOT }}
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
           doNotCache: false
 
@@ -319,17 +456,21 @@ jobs:
         run: |
           set -euo pipefail
           tool_cache="${RUNNER_TOOL_CACHE:-$HOME/.cache/actions-toolcache}"
-          flutter_root="$tool_cache/flutter/$FLUTTER_VERSION"
+          flutter_root="${FLUTTER_ROOT:-$tool_cache/flutter/$FLUTTER_VERSION}"
           archive="$RUNNER_TEMP/flutter-${FLUTTER_VERSION}.tar.xz"
 
           if [ ! -x "$flutter_root/bin/flutter" ]; then
+            extract_dir="$RUNNER_TEMP/flutter-extract"
             rm -rf "$flutter_root"
+            rm -rf "$extract_dir"
             mkdir -p "$(dirname "$flutter_root")"
+            mkdir -p "$extract_dir"
             curl -fsSL \
               "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
               -o "$archive"
-            tar -xJf "$archive" -C "$(dirname "$flutter_root")"
-            mv "$(dirname "$flutter_root")/flutter" "$flutter_root"
+            tar -xJf "$archive" -C "$extract_dir"
+            mv "$extract_dir/flutter" "$flutter_root"
+            rm -rf "$extract_dir"
           fi
 
           echo "$flutter_root/bin" >> "$GITHUB_PATH"
@@ -340,13 +481,66 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$CARGO_HOME" "$RUSTUP_HOME"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          if ! command -v rustup >/dev/null 2>&1; then
+            rustup_init="$RUNNER_TEMP/rustup-init.sh"
+            curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs -o "$rustup_init"
+            sh "$rustup_init" -y --no-modify-path --profile minimal --default-toolchain "$RUST_VERSION"
+          fi
           rustup toolchain install "$RUST_VERSION" --profile minimal
           rustup default "$RUST_VERSION"
+          rustup component add rustfmt
           rustup target add aarch64-linux-android
-          cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
+          if ! cargo ndk --version 2>/dev/null | grep -q "cargo-ndk $CARGO_NDK_VERSION"; then
+            cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
+          fi
+
+      - name: Prepare path-safe build workspace
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$BUILD_WORKSPACE"
+          mkdir -p "$BUILD_WORKSPACE"
+          if [ ! -f libs/hbb_common/Cargo.toml ]; then
+            hbb_common_sha="$(git ls-files -s libs/hbb_common | awk '{ print $2; exit }')"
+            if [ -z "$hbb_common_sha" ]; then
+              echo "Could not resolve libs/hbb_common gitlink SHA." >&2
+              exit 1
+            fi
+            rm -rf libs/hbb_common
+            git clone --no-checkout --filter=blob:none "$HBB_COMMON_URL" libs/hbb_common
+            git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$GITHUB_WORKSPACE/libs/hbb_common"
+            git -C libs/hbb_common fetch --depth 1 origin "$hbb_common_sha"
+            git -C libs/hbb_common checkout --detach FETCH_HEAD
+            rm -rf libs/hbb_common/.git
+          fi
+          rsync -a --delete \
+            --exclude .git \
+            --exclude libs/hbb_common/.git \
+            --exclude flutter/build \
+            --exclude target \
+            --exclude .dart_tool \
+            ./ "$BUILD_WORKSPACE"/
+          if [ ! -f "$BUILD_WORKSPACE/libs/hbb_common/Cargo.toml" ]; then
+            echo "Missing libs/hbb_common checkout in the self-hosted runner workspace." >&2
+            echo "The repository contains libs/hbb_common as a gitlink without a .gitmodules URL." >&2
+            exit 1
+          fi
+          env_stamp="$VCPKG_ROOT/.fold-android-env"
+          new_stamp="$(printf 'android_home=%s\nbuild_workspace=%s\n' "$ANDROID_HOME" "$BUILD_WORKSPACE")"
+          old_stamp="$(cat "$env_stamp" 2>/dev/null || true)"
+          if [ "$old_stamp" != "$new_stamp" ]; then
+            rm -rf "$VCPKG_ROOT/buildtrees" "$VCPKG_ROOT/installed" "$VCPKG_ROOT/packages"
+            printf '%s' "$new_stamp" > "$env_stamp"
+          fi
+          echo "BUILD_WORKSPACE=$BUILD_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Write Android local properties
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -367,13 +561,22 @@ jobs:
 
       - name: Build Android native dependencies
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         shell: bash
         run: |
           set -euo pipefail
           ./flutter/build_android_deps.sh arm64-v8a
 
+      - name: Prune native dependency build caches
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$VCPKG_ROOT/buildtrees" "$VCPKG_ROOT/packages" "$VCPKG_ROOT/downloads"
+
       - name: Configure Android release signing
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.FOLD_ANDROID_KEYSTORE_BASE64 }}
@@ -394,27 +597,51 @@ jobs:
             printf 'storePassword=%s\n' "$STORE_PASSWORD"
             printf 'keyPassword=%s\n' "$KEY_PASSWORD"
             printf 'keyAlias=%s\n' "$KEY_ALIAS"
-            printf 'storeFile=%s/.dev/keystores/fold-release.jks\n' "${{ github.workspace }}"
+            printf 'storeFile=%s/.dev/keystores/fold-release.jks\n' "$BUILD_WORKSPACE"
           } > .dev/keystores/key.properties
+          cp .dev/keystores/key.properties flutter/android/key.properties
 
       - name: Flutter pub get
         if: steps.version.outputs.update_needed == 'true'
-        working-directory: flutter
+        working-directory: ${{ env.BUILD_WORKSPACE }}/flutter
         run: flutter pub get
+
+      - name: Generate Flutter Rust bridge
+        if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$CARGO_HOME/bin:$PATH"
+          if ! cargo expand --version 2>/dev/null | grep -q "$CARGO_EXPAND_VERSION"; then
+            cargo install cargo-expand --version "$CARGO_EXPAND_VERSION" --locked
+          fi
+          if ! flutter_rust_bridge_codegen --version 2>/dev/null | grep -q "$FLUTTER_RUST_BRIDGE_VERSION"; then
+            cargo install flutter_rust_bridge_codegen --version "$FLUTTER_RUST_BRIDGE_VERSION" --features "uuid" --locked
+          fi
+          flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart \
+            --c-output ./flutter/macos/Runner/bridge_generated.h
+          if [ -d ./flutter/ios/Runner ]; then
+            cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h
+          fi
 
       - name: Flutter analyze
         if: steps.version.outputs.update_needed == 'true'
-        working-directory: flutter
+        working-directory: ${{ env.BUILD_WORKSPACE }}/flutter
         run: flutter analyze
 
       - name: Build arm64 release APK
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         env:
-          CARGO_TARGET_DIR: /tmp/rustdesk-fold-cargo-target
+          CARGO_TARGET_DIR: /tmp/rustdesk-fold-ci/cargo-target
         run: bash tools/dev/build_android_arm64_release.sh
 
       - name: Verify APK identity
         if: steps.version.outputs.update_needed == 'true'
+        working-directory: ${{ env.BUILD_WORKSPACE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -430,7 +657,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: rustdesk-fold-${{ steps.version.outputs.latest_tag }}-arm64-release-apk
-          path: flutter/build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ env.BUILD_WORKSPACE }}/flutter/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 14
 
       - name: Push update branch
@@ -460,12 +687,32 @@ jobs:
 
           if gh pr view "$BRANCH_NAME" --json url --jq .url >/tmp/pr-url 2>/dev/null; then
             pr_url="$(cat /tmp/pr-url)"
-            gh pr edit "$BRANCH_NAME" --title "$title" --body "$body"
-            echo "Updated existing PR: $pr_url"
+            if gh pr edit "$BRANCH_NAME" --title "$title" --body "$body"; then
+              echo "Updated existing PR: $pr_url"
+            else
+              echo "::warning::Could not update PR $pr_url with the workflow token."
+              echo "Update branch was pushed successfully: $BRANCH_NAME"
+            fi
           else
-            gh pr create \
+            if ! gh pr create \
               --base "$FOLD_BRANCH" \
               --head "$BRANCH_NAME" \
               --title "$title" \
-              --body "$body"
+              --body "$body"; then
+              echo "::warning::Could not create PR with the workflow token."
+              echo "Update branch was pushed successfully: $BRANCH_NAME"
+              echo "Enable 'Allow GitHub Actions to create and approve pull requests' or create the PR manually."
+            fi
           fi
+
+      - name: Prune path-sensitive tmp caches
+        if: always() && steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf \
+            "$BUILD_WORKSPACE" \
+            "$CI_PATH_ROOT/cargo-target" \
+            "$VCPKG_ROOT/buildtrees" \
+            "$VCPKG_ROOT/downloads" \
+            "$VCPKG_ROOT/packages"
