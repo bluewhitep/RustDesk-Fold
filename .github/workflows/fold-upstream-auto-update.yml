@@ -47,6 +47,7 @@ env:
   ANDROID_NDK_VERSION: "28.2.13676358"
   ANDROID_PLATFORM: "android-35"
   ANDROID_BUILD_TOOLS: "35.0.0"
+  ANDROID_CMDLINE_TOOLS_VERSION: "14742923"
 
 jobs:
   validate-workflow:
@@ -290,6 +291,7 @@ jobs:
             llvm-dev
             ninja-build
             pkg-config
+            unzip
             wget
             xz-utils
           )
@@ -328,6 +330,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          runner_temp="${RUNNER_TEMP:-/tmp}"
+          tool_cache="${RUNNER_TOOL_CACHE:-$HOME/.cache/actions-toolcache}"
+          android_home="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$tool_cache/android-sdk}}"
+          sdkmanager_bin="$android_home/cmdline-tools/latest/bin/sdkmanager"
           sdkmanager_lock="${RUNNER_TEMP:-/tmp}/rustdesk-fold-sdkmanager.lock"
           (
             flock 9
@@ -336,14 +342,32 @@ jobs:
               echo "Removing stale sdkmanager socket."
               rm -f /tmp/sdkmanager.sock
             fi
-            yes | sdkmanager --licenses >/dev/null 2>&1 || true
-            sdkmanager \
-              "platforms;$ANDROID_PLATFORM" \
-              "build-tools;$ANDROID_BUILD_TOOLS" \
-              "ndk;$ANDROID_NDK_VERSION"
+
+            if ! [ -x "$sdkmanager_bin" ] || ! "$sdkmanager_bin" --version >/dev/null 2>&1; then
+              cmdline_zip="$runner_temp/android-commandlinetools-linux-$ANDROID_CMDLINE_TOOLS_VERSION.zip"
+              tmp_tools="$runner_temp/android-cmdline-tools"
+              rm -rf "$tmp_tools" "$android_home/cmdline-tools/latest"
+              mkdir -p "$tmp_tools" "$android_home/cmdline-tools/latest"
+              curl -fsSL \
+                "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS_VERSION}_latest.zip" \
+                -o "$cmdline_zip"
+              unzip -q "$cmdline_zip" -d "$tmp_tools"
+              mv "$tmp_tools/cmdline-tools"/* "$android_home/cmdline-tools/latest/"
+            fi
+
+            export ANDROID_HOME="$android_home"
+            export ANDROID_SDK_ROOT="$android_home"
+            yes | "$sdkmanager_bin" --sdk_root="$android_home" --licenses >/dev/null 2>&1 || true
+            "$sdkmanager_bin" --sdk_root="$android_home" "platforms;$ANDROID_PLATFORM"
+            "$sdkmanager_bin" --sdk_root="$android_home" "build-tools;$ANDROID_BUILD_TOOLS"
+            "$sdkmanager_bin" --sdk_root="$android_home" "ndk;$ANDROID_NDK_VERSION"
           ) 9>"$sdkmanager_lock"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$android_home" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$android_home" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$android_home/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$android_home/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "$android_home/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$android_home/platform-tools" >> "$GITHUB_PATH"
 
       - name: Set up vcpkg
         if: steps.version.outputs.update_needed == 'true'
