@@ -32,7 +32,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: fold-upstream-auto-update
+  group: fold-upstream-auto-update-${{ github.event_name }}
   cancel-in-progress: false
 
 env:
@@ -62,7 +62,7 @@ jobs:
 
   update-build-pr:
     name: Rebase Fold branch onto latest RustDesk tag
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 180
 
