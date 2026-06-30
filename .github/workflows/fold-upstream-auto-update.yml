@@ -40,23 +40,25 @@ env:
   HBB_COMMON_URL: https://github.com/rustdesk/hbb_common.git
   FOLD_BRANCH: foldable-split-keyboard-dev
   UPDATE_BRANCH_PREFIX: chore/update-rustdesk
+  CI_PATH_ROOT: /tmp/rustdesk-fold-ci
   FLUTTER_VERSION: "3.24.5"
-  FLUTTER_ROOT: /tmp/rustdesk-fold-flutter
+  FLUTTER_ROOT: /tmp/rustdesk-fold-ci/flutter
   RUST_VERSION: "1.75.0"
   CARGO_NDK_VERSION: "3.1.2"
   CARGO_EXPAND_VERSION: "1.0.95"
   FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
-  CARGO_HOME: /tmp/rustdesk-fold-cargo
-  RUSTUP_HOME: /tmp/rustdesk-fold-rustup
+  CARGO_HOME: /tmp/rustdesk-fold-ci/cargo
+  RUSTUP_HOME: /tmp/rustdesk-fold-ci/rustup
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
-  VCPKG_ROOT: /tmp/rustdesk-fold-vcpkg
+  VCPKG_ROOT: /tmp/rustdesk-fold-ci/vcpkg
   NASM_VERSION: "2.16.03"
-  NASM_ROOT: /tmp/rustdesk-fold-nasm
-  BUILD_WORKSPACE: /tmp/rustdesk-fold-build-workspace
+  NASM_ROOT: /tmp/rustdesk-fold-ci/nasm
+  BUILD_WORKSPACE: /tmp/rustdesk-fold-ci/build-workspace
+  GRADLE_USER_HOME: /tmp/rustdesk-fold-ci/gradle
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   ANDROID_NDK_VERSION: "28.2.13676358"
-  ANDROID_HOME: /tmp/rustdesk-fold-android-sdk
-  ANDROID_SDK_ROOT: /tmp/rustdesk-fold-android-sdk
+  ANDROID_HOME: /tmp/rustdesk-fold-ci/android-sdk
+  ANDROID_SDK_ROOT: /tmp/rustdesk-fold-ci/android-sdk
   ANDROID_PLATFORM: "android-35"
   ANDROID_BUILD_TOOLS: "35.0.0"
   ANDROID_CMDLINE_TOOLS_VERSION: "14742923"
@@ -332,6 +334,27 @@ jobs:
           sudo -n apt-get update
           sudo -n apt-get install -y "${missing_packages[@]}"
 
+      - name: Prepare runner storage
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage_root="${RUNNER_WORKSPACE:-$(dirname "$GITHUB_WORKSPACE")}/_ci-tmp"
+          mkdir -p "$storage_root"
+          if [ -e "$CI_PATH_ROOT" ] && [ ! -L "$CI_PATH_ROOT" ]; then
+            rm -rf "$CI_PATH_ROOT"
+          fi
+          ln -sfn "$storage_root" "$CI_PATH_ROOT"
+          mkdir -p \
+            "$ANDROID_HOME" \
+            "$BUILD_WORKSPACE" \
+            "$CARGO_HOME" \
+            "$FLUTTER_ROOT" \
+            "$GRADLE_USER_HOME" \
+            "$NASM_ROOT" \
+            "$RUSTUP_HOME" \
+            "$VCPKG_ROOT"
+
       - name: Set up NASM
         if: steps.version.outputs.update_needed == 'true'
         shell: bash
@@ -372,7 +395,7 @@ jobs:
         run: |
           set -euo pipefail
           runner_temp="${RUNNER_TEMP:-/tmp}"
-          android_home="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/tmp/rustdesk-fold-android-sdk}}"
+          android_home="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$CI_PATH_ROOT/android-sdk}}"
           sdkmanager_bin="$android_home/cmdline-tools/latest/bin/sdkmanager"
           sdkmanager_lock="${RUNNER_TEMP:-/tmp}/rustdesk-fold-sdkmanager.lock"
           (
@@ -591,7 +614,7 @@ jobs:
         if: steps.version.outputs.update_needed == 'true'
         working-directory: ${{ env.BUILD_WORKSPACE }}
         env:
-          CARGO_TARGET_DIR: /tmp/rustdesk-fold-cargo-target
+          CARGO_TARGET_DIR: /tmp/rustdesk-fold-ci/cargo-target
         run: bash tools/dev/build_android_arm64_release.sh
 
       - name: Verify APK identity
