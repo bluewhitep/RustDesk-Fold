@@ -221,16 +221,13 @@ jobs:
 
           git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" || true
           if [ "$update_branch_exists" = "true" ] && [ "$force_update" = "true" ]; then
-            echo "Using existing update branch $branch for forced rebuild."
-            git switch -C "$branch" "refs/remotes/origin/$branch"
-            rebase_status=0
-          else
-            git switch -C "$branch"
-            set +e
-            git rebase --onto "$latest" "$current"
-            rebase_status=$?
-            set -e
+            echo "Rebuilding existing update branch $branch from the latest $FOLD_BRANCH state."
           fi
+          git switch -C "$branch"
+          set +e
+          git rebase --onto "$latest" "$current"
+          rebase_status=$?
+          set -e
 
           while [ "$rebase_status" -ne 0 ]; do
             conflicts="$(git diff --name-only --diff-filter=U)"
