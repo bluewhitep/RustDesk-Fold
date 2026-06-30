@@ -339,22 +339,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          storage_root="${RUNNER_WORKSPACE:-$(dirname "$GITHUB_WORKSPACE")}/_ci-tmp"
+          storage_root="${RUNNER_WORKSPACE:-$(dirname "$GITHUB_WORKSPACE")}/_ci-cache"
           mkdir -p "$storage_root"
-          if [ -e "$CI_PATH_ROOT" ] && [ ! -L "$CI_PATH_ROOT" ]; then
+          if [ -L "$CI_PATH_ROOT" ]; then
+            rm -f "$CI_PATH_ROOT"
+          fi
+          if [ -e "$CI_PATH_ROOT" ] && [ ! -d "$CI_PATH_ROOT" ]; then
             rm -rf "$CI_PATH_ROOT"
           fi
-          ln -sfn "$storage_root" "$CI_PATH_ROOT"
           mkdir -p \
             "$ANDROID_HOME" \
             "$BUILD_WORKSPACE" \
             "$CARGO_HOME" \
             "$FLUTTER_ROOT" \
-            "$GRADLE_USER_HOME" \
             "$NASM_ROOT" \
             "$RUSTUP_HOME" \
-            "$VCPKG_ROOT"
-          for safe_path in "$CI_PATH_ROOT" "$BUILD_WORKSPACE" "$FLUTTER_ROOT" "$VCPKG_ROOT"; do
+            "$VCPKG_ROOT" \
+            "$VCPKG_ROOT/downloads/git-tmp" \
+            "$storage_root/cargo-target" \
+            "$storage_root/gradle"
+          echo "CARGO_TARGET_DIR=$storage_root/cargo-target" >> "$GITHUB_ENV"
+          echo "GRADLE_USER_HOME=$storage_root/gradle" >> "$GITHUB_ENV"
+          for safe_path in "$CI_PATH_ROOT" "$BUILD_WORKSPACE" "$FLUTTER_ROOT" "$VCPKG_ROOT" "$VCPKG_ROOT/downloads/git-tmp"; do
             real_safe_path="$(readlink -f "$safe_path")"
             git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$safe_path"
             git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$real_safe_path"
@@ -622,8 +628,6 @@ jobs:
       - name: Build arm64 release APK
         if: steps.version.outputs.update_needed == 'true'
         working-directory: ${{ env.BUILD_WORKSPACE }}
-        env:
-          CARGO_TARGET_DIR: /tmp/rustdesk-fold-ci/cargo-target
         run: bash tools/dev/build_android_arm64_release.sh
 
       - name: Verify APK identity
