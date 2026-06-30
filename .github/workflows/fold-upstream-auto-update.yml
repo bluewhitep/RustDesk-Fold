@@ -347,19 +347,21 @@ jobs:
           if [ -e "$CI_PATH_ROOT" ] && [ ! -d "$CI_PATH_ROOT" ]; then
             rm -rf "$CI_PATH_ROOT"
           fi
+          rm -rf "$CI_PATH_ROOT/cargo" "$CI_PATH_ROOT/rustup"
           mkdir -p \
             "$ANDROID_HOME" \
             "$BUILD_WORKSPACE" \
-            "$CARGO_HOME" \
             "$FLUTTER_ROOT" \
             "$NASM_ROOT" \
-            "$RUSTUP_HOME" \
             "$VCPKG_ROOT" \
             "$VCPKG_ROOT/downloads/git-tmp" \
-            "$storage_root/cargo-target" \
-            "$storage_root/gradle"
-          echo "CARGO_TARGET_DIR=$storage_root/cargo-target" >> "$GITHUB_ENV"
+            "$CI_PATH_ROOT/cargo-target" \
+            "$storage_root/cargo" \
+            "$storage_root/gradle" \
+            "$storage_root/rustup"
+          echo "CARGO_HOME=$storage_root/cargo" >> "$GITHUB_ENV"
           echo "GRADLE_USER_HOME=$storage_root/gradle" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$storage_root/rustup" >> "$GITHUB_ENV"
           for safe_path in "$CI_PATH_ROOT" "$BUILD_WORKSPACE" "$FLUTTER_ROOT" "$VCPKG_ROOT" "$VCPKG_ROOT/downloads/git-tmp"; do
             real_safe_path="$(readlink -f "$safe_path")"
             git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$safe_path"
@@ -568,6 +570,13 @@ jobs:
           set -euo pipefail
           ./flutter/build_android_deps.sh arm64-v8a
 
+      - name: Prune native dependency build caches
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$VCPKG_ROOT/buildtrees" "$VCPKG_ROOT/packages" "$VCPKG_ROOT/downloads"
+
       - name: Configure Android release signing
         if: steps.version.outputs.update_needed == 'true'
         working-directory: ${{ env.BUILD_WORKSPACE }}
@@ -628,6 +637,8 @@ jobs:
       - name: Build arm64 release APK
         if: steps.version.outputs.update_needed == 'true'
         working-directory: ${{ env.BUILD_WORKSPACE }}
+        env:
+          CARGO_TARGET_DIR: /tmp/rustdesk-fold-ci/cargo-target
         run: bash tools/dev/build_android_arm64_release.sh
 
       - name: Verify APK identity
@@ -687,3 +698,15 @@ jobs:
               --title "$title" \
               --body "$body"
           fi
+
+      - name: Prune path-sensitive tmp caches
+        if: always() && steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf \
+            "$BUILD_WORKSPACE" \
+            "$CI_PATH_ROOT/cargo-target" \
+            "$VCPKG_ROOT/buildtrees" \
+            "$VCPKG_ROOT/downloads" \
+            "$VCPKG_ROOT/packages"
