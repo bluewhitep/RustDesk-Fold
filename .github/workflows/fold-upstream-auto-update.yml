@@ -354,6 +354,11 @@ jobs:
             "$NASM_ROOT" \
             "$RUSTUP_HOME" \
             "$VCPKG_ROOT"
+          for safe_path in "$CI_PATH_ROOT" "$BUILD_WORKSPACE" "$VCPKG_ROOT"; do
+            real_safe_path="$(readlink -f "$safe_path")"
+            git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$safe_path"
+            git config --file "$GIT_CONFIG_GLOBAL" --add safe.directory "$real_safe_path"
+          done
 
       - name: Set up NASM
         if: steps.version.outputs.update_needed == 'true'
