@@ -275,7 +275,8 @@ jobs:
             llvm-dev \
             ninja-build \
             pkg-config \
-            wget
+            wget \
+            xz-utils
 
       - name: Set up Java
         if: steps.version.outputs.update_needed == 'true'
@@ -307,11 +308,25 @@ jobs:
 
       - name: Set up Flutter
         if: steps.version.outputs.update_needed == 'true'
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_cache="${RUNNER_TOOL_CACHE:-$HOME/.cache/actions-toolcache}"
+          flutter_root="$tool_cache/flutter/$FLUTTER_VERSION"
+          archive="$RUNNER_TEMP/flutter-${FLUTTER_VERSION}.tar.xz"
+
+          if [ ! -x "$flutter_root/bin/flutter" ]; then
+            rm -rf "$flutter_root"
+            mkdir -p "$(dirname "$flutter_root")"
+            curl -fsSL \
+              "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
+              -o "$archive"
+            tar -xJf "$archive" -C "$(dirname "$flutter_root")"
+            mv "$(dirname "$flutter_root")/flutter" "$flutter_root"
+          fi
+
+          echo "$flutter_root/bin" >> "$GITHUB_PATH"
+          "$flutter_root/bin/flutter" --version
 
       - name: Set up Rust
         if: steps.version.outputs.update_needed == 'true'
