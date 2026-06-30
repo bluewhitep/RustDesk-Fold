@@ -51,7 +51,7 @@ env:
 jobs:
   validate-workflow:
     name: Validate workflow wiring
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     steps:
       - name: Report trigger context
         run: |
@@ -62,7 +62,7 @@ jobs:
   update-build-pr:
     name: Rebase Fold branch onto latest RustDesk tag
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 180
 
     steps:
