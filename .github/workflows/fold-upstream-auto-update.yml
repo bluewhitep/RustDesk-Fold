@@ -73,30 +73,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Install Ubuntu build prerequisites
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang \
-            cmake \
-            curl \
-            g++ \
-            git \
-            libclang-dev \
-            llvm-dev \
-            ninja-build \
-            pkg-config \
-            wget
-
       - name: Configure Git author
         run: |
           git config user.name "github-actions[bot]"
@@ -138,27 +114,58 @@ jobs:
           git rev-parse --verify "$current_version^{}" >/dev/null
           git rev-parse --verify "$latest_tag^{}" >/dev/null
 
-          update_needed=false
-          if [ "$current_version" != "$latest_tag" ] || [ "${{ github.event.inputs.force || 'false' }}" = "true" ]; then
-            update_needed=true
+          update_branch="$UPDATE_BRANCH_PREFIX-${latest_tag//./-}"
+          force_update="${{ github.event.inputs.force || 'false' }}"
+          update_branch_exists=false
+          if git ls-remote --exit-code --heads origin "$update_branch" >/dev/null 2>&1; then
+            update_branch_exists=true
           fi
 
-          update_branch="$UPDATE_BRANCH_PREFIX-${latest_tag//./-}"
+          update_needed=false
+          skip_reason=""
+          if [ "$force_update" = "true" ]; then
+            update_needed=true
+          elif [ "$current_version" = "$latest_tag" ]; then
+            skip_reason="already_current"
+          elif [ "$update_branch_exists" = "true" ]; then
+            skip_reason="update_branch_exists"
+          else
+            update_needed=true
+          fi
 
           {
             echo "current_version=$current_version"
             echo "latest_tag=$latest_tag"
             echo "update_branch=$update_branch"
+            echo "update_branch_exists=$update_branch_exists"
             echo "update_needed=$update_needed"
+            echo "skip_reason=$skip_reason"
           } >> "$GITHUB_OUTPUT"
 
           echo "Current Fold version: $current_version"
           echo "Latest upstream tag:  $latest_tag"
+          echo "Update branch:        $update_branch"
+          echo "Update branch exists: $update_branch_exists"
+          echo "Force update:         $force_update"
           echo "Update needed:        $update_needed"
 
       - name: Stop when already current
         if: steps.version.outputs.update_needed != 'true'
-        run: echo "Fold branch already reports RustDesk ${{ steps.version.outputs.latest_tag }}; nothing to do."
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ steps.version.outputs.skip_reason }}" in
+            already_current)
+              echo "Fold branch already reports RustDesk ${{ steps.version.outputs.latest_tag }}; nothing to do."
+              ;;
+            update_branch_exists)
+              echo "Update branch ${{ steps.version.outputs.update_branch }} already exists; skipping duplicate build."
+              echo "Use workflow_dispatch with force=true to rebuild this update branch."
+              ;;
+            *)
+              echo "No update requested."
+              ;;
+          esac
 
       - name: Check Android release signing secrets
         if: steps.version.outputs.update_needed == 'true'
@@ -243,6 +250,32 @@ jobs:
 
           echo "Range diff against previous Fold stack:"
           git range-diff "$current..${{ github.sha }}" "$latest..HEAD" || true
+
+      - name: Export GitHub Actions cache environment variables
+        if: steps.version.outputs.update_needed == 'true'
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install Ubuntu build prerequisites
+        if: steps.version.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            cmake \
+            curl \
+            g++ \
+            git \
+            libclang-dev \
+            llvm-dev \
+            ninja-build \
+            pkg-config \
+            wget
 
       - name: Set up Java
         if: steps.version.outputs.update_needed == 'true'
