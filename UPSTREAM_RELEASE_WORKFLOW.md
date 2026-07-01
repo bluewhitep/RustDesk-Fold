@@ -102,6 +102,13 @@ rustdesk_fold_v_1_4_8.apk
 
 Upload only the verified release APK asset for the formal release. Include the
 merge pull request, validation summary, and APK SHA-256 in the release notes.
+Use this project identity text in the release notes:
+
+```text
+RustDesk Fold, based on RustDesk v_x.y.z.
+This is an independent customized Android foldable-screen build and is not an
+official RustDesk release.
+```
 
 ## Cleanup
 

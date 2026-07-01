@@ -1,8 +1,10 @@
 # RustDesk Fold
 
-RustDesk Fold is an Android foldable-focused fork of RustDesk. It keeps the
-normal RustDesk mobile remote-control path intact, while adding a Fold Input
-Pane for large-screen and foldable Android devices.
+RustDesk Fold, based on RustDesk, is an Android foldable-focused build. It
+keeps the normal RustDesk mobile remote-control path intact, while adding a
+Fold Input Pane for large-screen and foldable Android devices.
+
+This is an independent customized build and is not an official RustDesk release.
 
 This repository is intended to build a separate Android application:
 

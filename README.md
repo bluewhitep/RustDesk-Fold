@@ -1,7 +1,9 @@
 > [!NOTE]
-> This branch builds **RustDesk Fold**, an Android foldable-focused fork with
-> package name `com.rustdesk.fold`. See [README_FOLD.md](README_FOLD.md) for
-> Fold-specific features, build commands, and release install policy.
+> **RustDesk Fold, based on RustDesk**, is an Android foldable-focused build
+> with package name `com.rustdesk.fold`. This is an independent customized
+> build and is not an official RustDesk release. See
+> [README_FOLD.md](README_FOLD.md) for Fold-specific features, build commands,
+> and release install policy.
 
 <p align="center">
   <img src="res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
@@ -144,7 +146,14 @@ docker build -t "rustdesk-builder" .
 Then, each time you need to build the application, run the following command:
 
 ```sh
-docker run --rm -it -v $PWD:/home/user/rustdesk -v rustdesk-git-cache:/home/user/.cargo/git -v rustdesk-registry-cache:/home/user/.cargo/registry -e PUID="$(id -u)" -e PGID="$(id -g)" rustdesk-builder
+container_user=user
+docker run --rm -it \
+  -v "$PWD:/home/${container_user}/rustdesk" \
+  -v "rustdesk-git-cache:/home/${container_user}/.cargo/git" \
+  -v "rustdesk-registry-cache:/home/${container_user}/.cargo/registry" \
+  -e PUID="$(id -u)" \
+  -e PGID="$(id -g)" \
+  rustdesk-builder
 ```
 
 Note that the first build may take longer before dependencies are cached, subsequent builds will be faster. Additionally, if you need to specify different arguments to the build command, you may do so at the end of the command in the `<OPTIONAL-ARGS>` position. For instance, if you wanted to build an optimized release version, you would run the command above followed by `--release`. The resulting executable will be available in the target folder on your system, and can be run with:
