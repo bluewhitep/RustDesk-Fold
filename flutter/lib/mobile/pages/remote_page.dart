@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:ui' show DisplayFeature, DisplayFeatureType;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
@@ -24,6 +27,10 @@ import '../../models/platform_model.dart';
 import '../../utils/image.dart';
 import '../widgets/dialog.dart';
 import '../widgets/custom_scale_widget.dart';
+
+part '../widgets/foldable_remote_ime.dart';
+part '../widgets/foldable_remote_input_pane.dart';
+part '../widgets/foldable_remote_keyboard.dart';
 
 final initText = '1' * 1024;
 
@@ -59,6 +66,13 @@ class RemotePage extends StatefulWidget {
 }
 
 class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
+  static const double _foldDefaultRemotePaneRatio = 0.5;
+  static const double _foldMinPaneRatio = 0.35;
+  static const double _foldMaxPaneRatio = 0.65;
+  static const double _foldResizeHitExtent = 28.0;
+  static const double _foldTouchpadPaneRatio = 0.35;
+  static const double _foldToolsBarHeight = 48.0;
+
   Timer? _timer;
   bool _showBar = !isWebDesktop;
   bool _showGestureHelp = false;
@@ -74,6 +88,28 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
+  var _foldRemoteDisplayMode = _FoldRemoteDisplayMode.contain;
+  var _foldTrackpadPlacement = _TrackpadPlacement.left;
+  var _foldLanguageSwitchMode = _FoldLanguageSwitchMode.macLanguageCycle;
+  var _foldModifierDisplayStyle = _FoldModifierDisplayStyle.mac;
+  final Map<_FoldLanguageShortcutSlot, _FoldKeyShortcut>
+      _foldLanguageShortcuts = Map.of(_kDefaultFoldLanguageShortcuts);
+  _FoldShortcutCaptureTarget? _foldShortcutCaptureTarget;
+  _FoldKeyShortcut? _foldShortcutCaptureValue;
+  bool _isFoldLanguageSettingsOpen = false;
+  bool _preserveFoldShortcutCaptureOnSettingsClose = false;
+  void Function(VoidCallback fn)? _foldLanguageSettingsSetState;
+  var _foldInputRevision = 0;
+  var _foldKeyboardInputMode = _FoldKeyboardInputMode.remoteImeKeyEvents;
+  var _fitRemoteResolutionToFoldPane = false;
+  var _foldRemotePaneRatio = _foldDefaultRemotePaneRatio;
+  double? _foldResizePreviewRemotePaneRatio;
+  Future<void> _foldRemoteImeKeyQueue = Future<void>.value();
+  final Set<int> _foldRemoteImePressedHids = <int>{};
+  Size? _lastFoldRemoteViewportSize;
+  CanvasViewportFit? _lastFoldViewportFit;
+  Size? _lastRequestedFoldResolution;
+  bool _foldViewportOverrideActive = false;
 
   Worker? _waylandKeyboardGateWorker;
   bool _waylandKeyboardGateInitialized = false;
@@ -93,6 +129,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _loadFoldLanguageSwitchSettings();
+    _loadFoldPaneSettings();
     gFFI.ffiModel.updateEventListener(sessionId, widget.id);
     gFFI.start(
       widget.id,
@@ -160,6 +198,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     await gFFI.invokeMethod("enable_soft_keyboard", true);
     _mobileFocusNode.dispose();
     _physicalFocusNode.dispose();
+    gFFI.canvasModel.clearViewportOverride();
     clearWaylandKeyboardPromptSuppressedForConnection(sessionId.toString());
     _waylandKeyboardGateWorker?.dispose();
     inputModel.keyboardInputAllowed = true;
@@ -441,6 +480,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final useFoldInputPane = _shouldUseFoldableSplitKeyboard(context);
     final keyboardIsVisible =
         keyboardVisibilityController.isVisible && _showEdit;
     final showActionButton = !_showBar || keyboardIsVisible || _showGestureHelp;
@@ -455,7 +495,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           floatingActionButtonLocation: keyboardIsVisible
               ? FABLocation(FloatingActionButtonLocation.endFloat, 0, -35)
               : null,
-          floatingActionButton: !showActionButton
+          floatingActionButton: useFoldInputPane || !showActionButton
               ? null
               : FloatingActionButton(
                   mini: !keyboardIsVisible,
@@ -480,22 +520,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                       }
                     });
                   }),
-          bottomNavigationBar: Obx(() => Stack(
-                alignment: Alignment.bottomCenter,
-                children: [
-                  gFFI.ffiModel.pi.isSet.isTrue &&
-                          gFFI.ffiModel.waitForFirstImage.isTrue
-                      ? emptyOverlay(MyTheme.canvasColor)
-                      : () {
-                          gFFI.ffiModel.tryShowAndroidActionsOverlay();
-                          return Offstage();
-                        }(),
-                  _bottomWidget(),
-                  gFFI.ffiModel.pi.isSet.isFalse
-                      ? emptyOverlay(MyTheme.canvasColor)
-                      : Offstage(),
-                ],
-              )),
+          bottomNavigationBar: _buildBottomNavigationBar(),
           body: Obx(
             () => getRawPointerAndKeyBody(Overlay(
               initialEntries: [
@@ -517,12 +542,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                               }
                               return Container(
                                 color: MyTheme.canvasColor,
-                                child: inputModel.isPhysicalMouse.value
-                                    ? getBodyForMobile()
-                                    : RawTouchGestureDetectorRegion(
-                                        child: getBodyForMobile(),
-                                        ffi: gFFI,
-                                      ),
+                                child: _buildBodyForMobileWithTouchRegion(),
                               );
                             }),
                           ),
@@ -532,6 +552,28 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             )),
           )),
     );
+  }
+
+  Widget _buildBottomNavigationBar() {
+    if (_shouldUseFoldableSplitKeyboard(context)) {
+      return const SizedBox.shrink();
+    }
+    return Obx(() => Stack(
+          alignment: Alignment.bottomCenter,
+          children: [
+            gFFI.ffiModel.pi.isSet.isTrue &&
+                    gFFI.ffiModel.waitForFirstImage.isTrue
+                ? emptyOverlay(MyTheme.canvasColor)
+                : () {
+                    gFFI.ffiModel.tryShowAndroidActionsOverlay();
+                    return Offstage();
+                  }(),
+            _bottomWidget(),
+            gFFI.ffiModel.pi.isSet.isFalse
+                ? emptyOverlay(MyTheme.canvasColor)
+                : Offstage(),
+          ],
+        ));
   }
 
   Widget getRawPointerAndKeyBody(Widget child) {
@@ -550,102 +592,113 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget getBottomAppBar() {
+  Widget getBottomAppBar({bool compactForFoldInput = false}) {
     final ffiModel = Provider.of<FfiModel>(context);
+    final useSplitKeyboard = _shouldUseFoldableSplitKeyboard(context);
+    IconButton keyboardButton() => IconButton(
+          color: Colors.white,
+          icon: const Icon(Icons.keyboard),
+          onPressed: useSplitKeyboard ? null : openKeyboard,
+        );
+    final mainButtons = <Widget>[
+          IconButton(
+            color: Colors.white,
+            icon: Icon(Icons.clear),
+            onPressed: () {
+              clientClose(sessionId, gFFI);
+            },
+          ),
+          IconButton(
+            color: Colors.white,
+            icon: Icon(Icons.tv),
+            onPressed: () {
+              setState(() => _showEdit = false);
+              showOptions(context, widget.id, gFFI.dialogManager);
+            },
+          )
+        ] +
+        (isWebDesktop || ffiModel.viewOnly || !ffiModel.keyboard
+            ? []
+            : gFFI.ffiModel.isPeerAndroid
+                ? [
+                    if (!useSplitKeyboard) keyboardButton(),
+                    IconButton(
+                      color: Colors.white,
+                      icon: const Icon(Icons.build),
+                      onPressed: () => gFFI.dialogManager
+                          .toggleMobileActionsOverlay(ffi: gFFI),
+                    )
+                  ]
+                : [
+                    if (!useSplitKeyboard) keyboardButton(),
+                    IconButton(
+                      color: Colors.white,
+                      icon: Icon(gFFI.ffiModel.touchMode
+                          ? Icons.touch_app
+                          : Icons.mouse),
+                      onPressed: () =>
+                          setState(() => _showGestureHelp = !_showGestureHelp),
+                    ),
+                  ]) +
+        (isWeb
+            ? []
+            : <Widget>[
+                futureBuilder(
+                    future: gFFI.invokeMethod(
+                        "get_value", "KEY_IS_SUPPORT_VOICE_CALL"),
+                    hasData: (isSupportVoiceCall) => IconButton(
+                          color: Colors.white,
+                          icon: isAndroid && isSupportVoiceCall
+                              ? SvgPicture.asset('assets/chat.svg',
+                                  colorFilter: ColorFilter.mode(
+                                      Colors.white, BlendMode.srcIn))
+                              : Icon(Icons.message),
+                          onPressed: () => isAndroid && isSupportVoiceCall
+                              ? showChatOptions(widget.id)
+                              : onPressedTextChat(widget.id),
+                        ))
+              ]) +
+        [
+          IconButton(
+            color: Colors.white,
+            icon: Icon(Icons.more_vert),
+            onPressed: () {
+              setState(() => _showEdit = false);
+              showActions(widget.id);
+            },
+          ),
+        ];
+    final collapseButton = Obx(() => IconButton(
+          color: Colors.white,
+          icon: Icon(Icons.expand_more),
+          onPressed: gFFI.ffiModel.waitForFirstImage.isTrue
+              ? null
+              : () {
+                  setState(() => _showBar = !_showBar);
+                },
+        ));
+    final child = compactForFoldInput
+        ? SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: mainButtons + [collapseButton],
+            ),
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.max,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: <Widget>[
+              Row(children: mainButtons),
+              collapseButton,
+            ],
+          );
     return BottomAppBar(
+      height: compactForFoldInput ? _foldToolsBarHeight : null,
+      padding: compactForFoldInput ? EdgeInsets.zero : null,
       elevation: 10,
       color: MyTheme.accent,
-      child: Row(
-        mainAxisSize: MainAxisSize.max,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: <Widget>[
-          Row(
-              children: <Widget>[
-                    IconButton(
-                      color: Colors.white,
-                      icon: Icon(Icons.clear),
-                      onPressed: () {
-                        clientClose(sessionId, gFFI);
-                      },
-                    ),
-                    IconButton(
-                      color: Colors.white,
-                      icon: Icon(Icons.tv),
-                      onPressed: () {
-                        setState(() => _showEdit = false);
-                        showOptions(context, widget.id, gFFI.dialogManager);
-                      },
-                    )
-                  ] +
-                  (isWebDesktop || ffiModel.viewOnly || !ffiModel.keyboard
-                      ? []
-                      : gFFI.ffiModel.isPeerAndroid
-                          ? [
-                              IconButton(
-                                  color: Colors.white,
-                                  icon: Icon(Icons.keyboard),
-                                  onPressed: openKeyboard),
-                              IconButton(
-                                color: Colors.white,
-                                icon: const Icon(Icons.build),
-                                onPressed: () => gFFI.dialogManager
-                                    .toggleMobileActionsOverlay(ffi: gFFI),
-                              )
-                            ]
-                          : [
-                              IconButton(
-                                  color: Colors.white,
-                                  icon: Icon(Icons.keyboard),
-                                  onPressed: openKeyboard),
-                              IconButton(
-                                color: Colors.white,
-                                icon: Icon(gFFI.ffiModel.touchMode
-                                    ? Icons.touch_app
-                                    : Icons.mouse),
-                                onPressed: () => setState(
-                                    () => _showGestureHelp = !_showGestureHelp),
-                              ),
-                            ]) +
-                  (isWeb
-                      ? []
-                      : <Widget>[
-                          futureBuilder(
-                              future: gFFI.invokeMethod(
-                                  "get_value", "KEY_IS_SUPPORT_VOICE_CALL"),
-                              hasData: (isSupportVoiceCall) => IconButton(
-                                    color: Colors.white,
-                                    icon: isAndroid && isSupportVoiceCall
-                                        ? SvgPicture.asset('assets/chat.svg',
-                                            colorFilter: ColorFilter.mode(
-                                                Colors.white, BlendMode.srcIn))
-                                        : Icon(Icons.message),
-                                    onPressed: () =>
-                                        isAndroid && isSupportVoiceCall
-                                            ? showChatOptions(widget.id)
-                                            : onPressedTextChat(widget.id),
-                                  ))
-                        ]) +
-                  [
-                    IconButton(
-                      color: Colors.white,
-                      icon: Icon(Icons.more_vert),
-                      onPressed: () {
-                        setState(() => _showEdit = false);
-                        showActions(widget.id);
-                      },
-                    ),
-                  ]),
-          Obx(() => IconButton(
-                color: Colors.white,
-                icon: Icon(Icons.expand_more),
-                onPressed: gFFI.ffiModel.waitForFirstImage.isTrue
-                    ? null
-                    : () {
-                        setState(() => _showBar = !_showBar);
-                      },
-              )),
-        ],
-      ),
+      child: child,
     );
   }
 
@@ -654,66 +707,1376 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       !gFFI.canvasModel.cursorEmbedded &&
       !gFFI.inputModel.relativeMouseMode.value;
 
+  bool _isFoldableDisplayFeature(DisplayFeature feature) =>
+      feature.type == DisplayFeatureType.hinge ||
+      feature.type == DisplayFeatureType.fold;
+
+  bool _shouldUseFoldableSplitKeyboard(BuildContext context) {
+    if (!isAndroid) {
+      return false;
+    }
+    final mediaQuery = MediaQuery.of(context);
+    final size = mediaQuery.size;
+    final hasFoldOrHinge =
+        mediaQuery.displayFeatures.any(_isFoldableDisplayFeature);
+    return size.shortestSide >= 600 || size.width >= 700 || hasFoldOrHinge;
+  }
+
+  Axis _foldPaneSplitAxis(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final size = mediaQuery.size;
+    if (mediaQuery.orientation == Orientation.portrait ||
+        size.height > size.width) {
+      return Axis.vertical;
+    }
+
+    for (final feature in mediaQuery.displayFeatures) {
+      if (!_isFoldableDisplayFeature(feature)) {
+        continue;
+      }
+      if (feature.bounds.width > feature.bounds.height) {
+        return Axis.vertical;
+      }
+      if (feature.bounds.height > feature.bounds.width) {
+        return Axis.horizontal;
+      }
+    }
+    return Axis.horizontal;
+  }
+
+  double _clampFoldRemotePaneRatio(double ratio) =>
+      ratio.clamp(_foldMinPaneRatio, _foldMaxPaneRatio).toDouble();
+
+  CanvasViewportFit _foldViewportFit() {
+    switch (_foldRemoteDisplayMode) {
+      case _FoldRemoteDisplayMode.fill:
+        return CanvasViewportFit.cover;
+      case _FoldRemoteDisplayMode.contain:
+      case _FoldRemoteDisplayMode.panZoom:
+        return CanvasViewportFit.contain;
+    }
+  }
+
+  String _foldDisplayModeLabel(_FoldRemoteDisplayMode mode) {
+    switch (mode) {
+      case _FoldRemoteDisplayMode.contain:
+        return translate('Contain');
+      case _FoldRemoteDisplayMode.fill:
+        return translate('Fill');
+      case _FoldRemoteDisplayMode.panZoom:
+        return translate('Pan/Zoom');
+    }
+  }
+
+  IconData _foldDisplayModeIcon(_FoldRemoteDisplayMode mode) {
+    switch (mode) {
+      case _FoldRemoteDisplayMode.contain:
+        return Icons.fit_screen;
+      case _FoldRemoteDisplayMode.fill:
+        return Icons.fullscreen;
+      case _FoldRemoteDisplayMode.panZoom:
+        return Icons.open_with;
+    }
+  }
+
+  Size _normalizeFoldViewportSize(Size size) {
+    return Size(
+      size.width.isFinite
+          ? size.width.clamp(0.0, double.infinity).toDouble()
+          : 0.0,
+      size.height.isFinite
+          ? size.height.clamp(0.0, double.infinity).toDouble()
+          : 0.0,
+    );
+  }
+
+  void _syncFoldCanvasViewport(Size viewportSize) {
+    final normalizedSize = _normalizeFoldViewportSize(viewportSize);
+    final fit = _foldViewportFit();
+    _scheduleFoldRemoteResolution(normalizedSize);
+    if (_foldViewportOverrideActive &&
+        _lastFoldRemoteViewportSize == normalizedSize &&
+        _lastFoldViewportFit == fit) {
+      return;
+    }
+
+    _foldViewportOverrideActive = true;
+    _lastFoldRemoteViewportSize = normalizedSize;
+    _lastFoldViewportFit = fit;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_foldViewportOverrideActive ||
+          _lastFoldRemoteViewportSize != normalizedSize ||
+          _lastFoldViewportFit != fit) {
+        return;
+      }
+      final changed =
+          gFFI.canvasModel.setViewportOverride(normalizedSize, fit: fit);
+      if (changed) {
+        unawaited(gFFI.canvasModel.updateViewStyle());
+      }
+    });
+  }
+
+  void _clearFoldCanvasViewport() {
+    if (!_foldViewportOverrideActive &&
+        _lastFoldRemoteViewportSize == null &&
+        _lastFoldViewportFit == null) {
+      return;
+    }
+    _foldViewportOverrideActive = false;
+    _lastFoldRemoteViewportSize = null;
+    _lastFoldViewportFit = null;
+    _lastRequestedFoldResolution = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _foldViewportOverrideActive) {
+        return;
+      }
+      if (gFFI.canvasModel.clearViewportOverride()) {
+        unawaited(gFFI.canvasModel.updateViewStyle());
+      }
+    });
+  }
+
+  bool get _canFitRemoteResolutionToFoldPane {
+    final pi = gFFI.ffiModel.pi;
+    return gFFI.ffiModel.keyboard &&
+        gFFI.ffiModel.isVirtualDisplayResolution &&
+        pi.currentDisplay != kAllDisplayValue;
+  }
+
+  void _toggleFitRemoteResolutionToFoldPane() {
+    if (!_canFitRemoteResolutionToFoldPane) {
+      return;
+    }
+    setState(() {
+      _fitRemoteResolutionToFoldPane = !_fitRemoteResolutionToFoldPane;
+      _lastRequestedFoldResolution = null;
+    });
+  }
+
+  void _scheduleFoldRemoteResolution(Size viewportSize) {
+    if (!_fitRemoteResolutionToFoldPane || !_canFitRemoteResolutionToFoldPane) {
+      return;
+    }
+
+    final width = viewportSize.width.round().clamp(320, 8192).toInt();
+    final height = viewportSize.height.round().clamp(240, 8192).toInt();
+    final requested = Size(width.toDouble(), height.toDouble());
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_fitRemoteResolutionToFoldPane ||
+          !_canFitRemoteResolutionToFoldPane ||
+          _lastRequestedFoldResolution == requested) {
+        return;
+      }
+      final rect = gFFI.ffiModel.rect;
+      if (rect != null &&
+          rect.width.round() == width &&
+          rect.height.round() == height) {
+        _lastRequestedFoldResolution = requested;
+        return;
+      }
+      _lastRequestedFoldResolution = requested;
+      unawaited(bind.sessionChangeResolution(
+        sessionId: sessionId,
+        display: gFFI.ffiModel.pi.currentDisplay,
+        width: width,
+        height: height,
+      ));
+    });
+  }
+
+  void _disableRemoteSoftKeyboardForSplitMode() {
+    if (!_showEdit && !_mobileFocusNode.hasFocus) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _timer?.cancel();
+      gFFI.invokeMethod("enable_soft_keyboard", false);
+      _mobileFocusNode.unfocus();
+      if (_showEdit) {
+        setState(() => _showEdit = false);
+      }
+    });
+  }
+
+  void _loadFoldLanguageSwitchSettings() {
+    final storedLanguageMode =
+        bind.mainGetLocalOption(key: _kFoldLanguageSwitchModeOption);
+    final storedModifierDisplayStyle = _foldModifierDisplayStyleFromValue(
+        bind.mainGetLocalOption(key: _kFoldModifierDisplayStyleOption));
+    final targetOs =
+        storedLanguageMode.isEmpty && storedModifierDisplayStyle != null
+            ? _foldTargetOsForModifierDisplayStyle(storedModifierDisplayStyle)
+            : _foldTargetOsForLanguageSwitchMode(
+                _foldLanguageSwitchModeFromValue(storedLanguageMode),
+              );
+    _foldLanguageSwitchMode = _foldLanguageSwitchModeForTargetOs(targetOs);
+    _foldModifierDisplayStyle = _foldModifierDisplayStyleForTargetOs(targetOs);
+    if (storedLanguageMode == 'macGlobal') {
+      unawaited(bind.mainSetLocalOption(
+        key: _kFoldLanguageSwitchModeOption,
+        value: _foldLanguageSwitchModeValue(_foldLanguageSwitchMode),
+      ));
+    }
+    for (final slot in _FoldLanguageShortcutSlot.values) {
+      final fallback = _kDefaultFoldLanguageShortcuts[slot]!;
+      _foldLanguageShortcuts[slot] = _FoldKeyShortcut.fromOptionValue(
+        bind.mainGetLocalOption(key: _foldLanguageShortcutOptionKey(slot)),
+        fallback,
+      );
+    }
+  }
+
+  void _loadFoldPaneSettings() {
+    final ratio = double.tryParse(
+        bind.mainGetLocalOption(key: _kFoldRemotePaneRatioOption));
+    if (ratio != null) {
+      _foldRemotePaneRatio = _clampFoldRemotePaneRatio(ratio);
+    }
+    _foldKeyboardInputMode = _foldKeyboardInputModeFromValue(
+        bind.mainGetLocalOption(key: _kFoldKeyboardInputModeOption));
+  }
+
+  _FoldTargetOs get _foldTargetOs =>
+      _foldTargetOsForLanguageSwitchMode(_foldLanguageSwitchMode);
+
+  _FoldKeyShortcut _foldLanguageShortcut(_FoldLanguageShortcutSlot slot) =>
+      _foldLanguageShortcuts[slot] ?? _kDefaultFoldLanguageShortcuts[slot]!;
+
+  void _setFoldTargetOs(_FoldTargetOs targetOs) {
+    final languageMode = _foldLanguageSwitchModeForTargetOs(targetOs);
+    final modifierDisplayStyle = _foldModifierDisplayStyleForTargetOs(targetOs);
+    setState(() {
+      _foldLanguageSwitchMode = languageMode;
+      _foldModifierDisplayStyle = modifierDisplayStyle;
+      _foldShortcutCaptureTarget = null;
+      _foldShortcutCaptureValue = null;
+    });
+    unawaited(bind.mainSetLocalOption(
+      key: _kFoldLanguageSwitchModeOption,
+      value: _foldLanguageSwitchModeValue(languageMode),
+    ));
+    unawaited(bind.mainSetLocalOption(
+      key: _kFoldModifierDisplayStyleOption,
+      value: _foldModifierDisplayStyleValue(modifierDisplayStyle),
+    ));
+    _refreshFoldLanguageSettings();
+  }
+
+  void _setFoldLanguageShortcut(
+    _FoldLanguageShortcutSlot slot,
+    _FoldKeyShortcut shortcut,
+  ) {
+    setState(() => _foldLanguageShortcuts[slot] = shortcut);
+    unawaited(bind.mainSetLocalOption(
+      key: _foldLanguageShortcutOptionKey(slot),
+      value: shortcut.toOptionValue(),
+    ));
+  }
+
+  void _setFoldKeyboardInputMode(_FoldKeyboardInputMode mode) {
+    setState(() => _foldKeyboardInputMode = mode);
+    unawaited(bind.mainSetLocalOption(
+      key: _kFoldKeyboardInputModeOption,
+      value: _foldKeyboardInputModeValue(mode),
+    ));
+    if (mode == _FoldKeyboardInputMode.remoteImeKeyEvents) {
+      unawaited(_ensureFoldRemoteImeKeyboardMode());
+    }
+  }
+
+  void _notifyFoldInputStateChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(() => _foldInputRevision++);
+    _refreshFoldLanguageSettings();
+  }
+
+  void _sendFoldLanguageShortcut(_FoldKeyShortcut shortcut) {
+    _withLocalKeyboardInput(() {
+      unawaited(_queueFoldRemoteImeAction(
+        () => _sendFoldShortcutSafely(shortcut, reason: 'language shortcut'),
+      ));
+    });
+  }
+
+  Future<bool> _ensureFoldRemoteImeKeyboardMode() async {
+    final mapSupported = bind.sessionIsKeyboardModeSupported(
+        sessionId: sessionId, mode: kKeyMapMode);
+    if (!mapSupported) {
+      if (kDebugMode) {
+        debugPrint(
+          'fold remote ime: map keyboard mode is not supported; '
+          'falling back to sessionInputKey',
+        );
+      }
+      return false;
+    }
+    final current = await bind.sessionGetKeyboardMode(sessionId: sessionId);
+    if (current != kKeyMapMode) {
+      await bind.sessionSetKeyboardMode(
+          sessionId: sessionId, value: kKeyMapMode);
+      await inputModel.updateKeyboardMode();
+    }
+    return true;
+  }
+
+  Future<void> _queueFoldRemoteImeAction(Future<void> Function() action) {
+    final previous =
+        _foldRemoteImeKeyQueue.catchError((Object e, StackTrace s) {
+      if (kDebugMode) {
+        debugPrint('fold remote ime: previous key action failed: $e');
+      }
+    });
+    final next = previous.then((_) => action());
+    _foldRemoteImeKeyQueue = next.catchError((Object e, StackTrace s) {
+      if (kDebugMode) {
+        debugPrint('fold remote ime: queued key action failed: $e');
+      }
+    });
+    return next;
+  }
+
+  List<int> _foldActiveRemoteImeModifierHids({
+    required bool ctrl,
+    required bool alt,
+    required bool shift,
+    required bool command,
+  }) {
+    final mac = _foldModifierDisplayStyle == _FoldModifierDisplayStyle.mac;
+    final modifiers = <int>[
+      if (shift) 0xE1,
+      if (ctrl) 0xE0,
+    ];
+    if (mac) {
+      modifiers.addAll([
+        if (alt) 0xE2,
+        if (command) 0xE3,
+      ]);
+    } else {
+      modifiers.addAll([
+        if (command) 0xE3,
+        if (alt) 0xE2,
+      ]);
+    }
+    return modifiers;
+  }
+
+  Future<void> _sendFoldRemoteImeHid(int usbHid, bool down) async {
+    if (down) {
+      _foldRemoteImePressedHids.add(usbHid);
+    }
+    try {
+      await bind.sessionHandleFlutterKeyEvent(
+        sessionId: sessionId,
+        character: '',
+        usbHid: usbHid,
+        lockModes: 0,
+        downOrUp: down,
+      );
+    } finally {
+      if (!down) {
+        _foldRemoteImePressedHids.remove(usbHid);
+      }
+    }
+  }
+
+  Future<void> _releaseFoldRemoteImePressedHids(String reason) async {
+    final pressed = _foldRemoteImePressedHids.toList(growable: false);
+    for (final usbHid in pressed.reversed) {
+      try {
+        await bind.sessionHandleFlutterKeyEvent(
+          sessionId: sessionId,
+          character: '',
+          usbHid: usbHid,
+          lockModes: 0,
+          downOrUp: false,
+        );
+      } finally {
+        _foldRemoteImePressedHids.remove(usbHid);
+      }
+    }
+    if (kDebugMode) {
+      debugPrint(
+        'fold remote ime: release after $reason, '
+        'pressedSetEmpty=${_foldRemoteImePressedHids.isEmpty}',
+      );
+    }
+  }
+
+  void _clearFoldModifierTogglesAndShortcutCapture() {
+    if (!mounted) {
+      inputModel.resetModifiers();
+      _foldShortcutCaptureTarget = null;
+      _foldShortcutCaptureValue = null;
+      return;
+    }
+    setState(() {
+      inputModel.resetModifiers();
+      _foldShortcutCaptureTarget = null;
+      _foldShortcutCaptureValue = null;
+      _foldInputRevision++;
+    });
+    _refreshFoldLanguageSettings();
+  }
+
+  Future<void> _sendFoldRemoteImeKeySequence(
+    String keyName,
+    int usbHid, {
+    required bool ctrl,
+    required bool alt,
+    required bool shift,
+    required bool command,
+  }) async {
+    final mapModeReady = await _ensureFoldRemoteImeKeyboardMode();
+    if (kDebugMode) {
+      final mode = await bind.sessionGetKeyboardMode(sessionId: sessionId);
+      debugPrint(
+        'fold virtual keyboard: mode=Remote IME key events, '
+        'key=$keyName, usbHid=0x${usbHid.toRadixString(16)}, '
+        'keyboardMode=${mode ?? ''}, mapModeReady=$mapModeReady, '
+        'path=sessionHandleFlutterKeyEvent',
+      );
+    }
+    if (!mapModeReady) {
+      _sendFoldLegacyShortcutPress(_FoldKeyShortcut(
+        key: keyName,
+        ctrl: ctrl,
+        alt: alt,
+        shift: shift,
+        command: command,
+      ));
+      return;
+    }
+    final modifiers = _foldActiveRemoteImeModifierHids(
+      ctrl: ctrl,
+      alt: alt,
+      shift: shift,
+      command: command,
+    );
+    try {
+      for (final modifier in modifiers) {
+        await _sendFoldRemoteImeHid(modifier, true);
+      }
+      await _sendFoldRemoteImeHid(usbHid, true);
+      await _sendFoldRemoteImeHid(usbHid, false);
+      for (final modifier in modifiers.reversed) {
+        await _sendFoldRemoteImeHid(modifier, false);
+      }
+    } finally {
+      await _releaseFoldRemoteImePressedHids(keyName);
+    }
+  }
+
+  void _sendFoldLegacyShortcutPress(_FoldKeyShortcut shortcut) {
+    final oldCtrl = inputModel.ctrl;
+    final oldAlt = inputModel.alt;
+    final oldShift = inputModel.shift;
+    final oldCommand = inputModel.command;
+    inputModel.ctrl = shortcut.ctrl;
+    inputModel.alt = shortcut.alt;
+    inputModel.shift = shortcut.shift;
+    inputModel.command = shortcut.command;
+    try {
+      inputModel.inputKey(shortcut.key);
+    } finally {
+      inputModel.ctrl = oldCtrl;
+      inputModel.alt = oldAlt;
+      inputModel.shift = oldShift;
+      inputModel.command = oldCommand;
+    }
+  }
+
+  Future<void> _sendFoldShortcutSafely(
+    _FoldKeyShortcut shortcut, {
+    required String reason,
+  }) async {
+    if (kDebugMode) {
+      debugPrint(
+        'fold shortcut before $reason: key=${shortcut.key}, '
+        'shortcutModifiers='
+        'shift=${shortcut.shift}, ctrl=${shortcut.ctrl}, '
+        'alt=${shortcut.alt}, command=${shortcut.command}, '
+        'toolbarModifiers='
+        'shift=${inputModel.shift}, ctrl=${inputModel.ctrl}, '
+        'alt=${inputModel.alt}, command=${inputModel.command}',
+      );
+    }
+    try {
+      final remoteImeKey = _foldRemoteImeKeyEventForKeyName(shortcut.key);
+      if (remoteImeKey != null && await _ensureFoldRemoteImeKeyboardMode()) {
+        await _sendFoldRemoteImeKeySequence(
+          remoteImeKey.keyName,
+          remoteImeKey.usbHid,
+          ctrl: shortcut.ctrl,
+          alt: shortcut.alt,
+          shift: shortcut.shift,
+          command: shortcut.command,
+        );
+      } else {
+        _sendFoldLegacyShortcutPress(shortcut);
+      }
+    } finally {
+      await _releaseFoldRemoteImePressedHids(reason);
+      _clearFoldModifierTogglesAndShortcutCapture();
+      if (kDebugMode) {
+        debugPrint(
+          'fold shortcut after $reason: '
+          'pressedSetEmpty=${_foldRemoteImePressedHids.isEmpty}, '
+          'toolbarModifiers='
+          'shift=${inputModel.shift}, ctrl=${inputModel.ctrl}, '
+          'alt=${inputModel.alt}, command=${inputModel.command}',
+        );
+      }
+    }
+  }
+
+  _FoldLanguageShortcutSlot _foldShortcutSlotForTarget(
+    _FoldLanguageSwitchMode mode,
+    _FoldShortcutCaptureTarget target,
+  ) {
+    final slots = _foldLanguageShortcutSlotsForMode(mode);
+    return target == _FoldShortcutCaptureTarget.previous ? slots[0] : slots[1];
+  }
+
+  _FoldKeyShortcut _shortcutFromCurrentModifiers(String key) {
+    return _FoldKeyShortcut(
+      key: key,
+      ctrl: key == 'VK_CONTROL' ? false : inputModel.ctrl,
+      alt: key == 'VK_MENU' ? false : inputModel.alt,
+      shift: key == 'VK_SHIFT' ? false : inputModel.shift,
+      command: key == 'Meta' ? false : inputModel.command,
+    );
+  }
+
+  void _refreshFoldLanguageSettings() {
+    final refresh = _foldLanguageSettingsSetState;
+    if (refresh == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_isFoldLanguageSettingsOpen) {
+        refresh(() {});
+      }
+    });
+  }
+
+  void _captureFoldShortcutKey(String key) {
+    if (_foldShortcutCaptureTarget == null) {
+      return;
+    }
+    _foldShortcutCaptureValue = _shortcutFromCurrentModifiers(key);
+    _refreshFoldLanguageSettings();
+  }
+
+  void _startFoldShortcutCapture(_FoldShortcutCaptureTarget target) {
+    inputModel.resetModifiers();
+    _foldShortcutCaptureTarget = target;
+    _foldShortcutCaptureValue = null;
+    _notifyFoldInputStateChanged();
+  }
+
+  void _cancelFoldShortcutCapture() {
+    inputModel.resetModifiers();
+    _foldShortcutCaptureTarget = null;
+    _foldShortcutCaptureValue = null;
+    _notifyFoldInputStateChanged();
+  }
+
+  void _saveFoldShortcutCapture() {
+    final captureTarget = _foldShortcutCaptureTarget;
+    final captured = _foldShortcutCaptureValue;
+    if (captureTarget == null || captured == null) {
+      return;
+    }
+    final slot =
+        _foldShortcutSlotForTarget(_foldLanguageSwitchMode, captureTarget);
+    _setFoldLanguageShortcut(slot, captured);
+    inputModel.resetModifiers();
+    _foldShortcutCaptureTarget = null;
+    _foldShortcutCaptureValue = null;
+    _notifyFoldInputStateChanged();
+  }
+
+  void _closeFoldLanguageSettings() {
+    final preserveCapture = _preserveFoldShortcutCaptureOnSettingsClose;
+    _preserveFoldShortcutCaptureOnSettingsClose = false;
+    if (!preserveCapture) {
+      inputModel.resetModifiers();
+      _foldShortcutCaptureTarget = null;
+      _foldShortcutCaptureValue = null;
+    }
+    _isFoldLanguageSettingsOpen = false;
+    _foldLanguageSettingsSetState = null;
+    _notifyFoldInputStateChanged();
+  }
+
+  Widget _foldShortcutSettingsTile(
+    _FoldShortcutCaptureTarget target,
+    VoidCallback close,
+  ) {
+    final slot = _foldShortcutSlotForTarget(_foldLanguageSwitchMode, target);
+    final title = _foldLanguageShortcutTitle(slot);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      title: Text(title),
+      subtitle: Text(
+        _foldLanguageShortcut(slot).displayLabelFor(_foldModifierDisplayStyle),
+      ),
+      trailing: const Icon(Icons.keyboard),
+      selected: _foldShortcutCaptureTarget == target,
+      onTap: () {
+        _preserveFoldShortcutCaptureOnSettingsClose = true;
+        _startFoldShortcutCapture(target);
+        close();
+      },
+    );
+  }
+
+  Widget _foldTargetOsTile(
+    _FoldTargetOs targetOs,
+    void Function(VoidCallback fn) dialogSetState,
+  ) {
+    return RadioListTile<_FoldTargetOs>(
+      contentPadding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      title: Text(_foldTargetOsLabel(targetOs)),
+      value: targetOs,
+      groupValue: _foldTargetOs,
+      onChanged: (value) {
+        if (value == null) {
+          return;
+        }
+        _setFoldTargetOs(value);
+        dialogSetState(() {});
+      },
+    );
+  }
+
+  Widget _foldKeyboardInputModeTile(
+    _FoldKeyboardInputMode mode,
+    void Function(VoidCallback fn) dialogSetState,
+  ) {
+    final title = mode == _FoldKeyboardInputMode.remoteImeKeyEvents
+        ? '${translate('Remote IME')} / ${translate('Key Events')}'
+        : translate('Text Injection');
+    return RadioListTile<_FoldKeyboardInputMode>(
+      contentPadding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      title: Text(title),
+      value: mode,
+      groupValue: _foldKeyboardInputMode,
+      onChanged: (value) {
+        if (value == null) {
+          return;
+        }
+        _setFoldKeyboardInputMode(value);
+        dialogSetState(() {});
+      },
+    );
+  }
+
+  void _showFoldLanguageSettings() {
+    if (_isFoldLanguageSettingsOpen) {
+      return;
+    }
+    _isFoldLanguageSettingsOpen = true;
+    gFFI.dialogManager.show((dialogSetState, close, context) {
+      _foldLanguageSettingsSetState = dialogSetState;
+      return CustomAlertDialog(
+        title: Text(translate('Target OS')),
+        content: SizedBox(
+          width: 380,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    translate('Target OS'),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                for (final targetOs in _FoldTargetOs.values)
+                  _foldTargetOsTile(targetOs, dialogSetState),
+                const Divider(color: MyTheme.border),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    translate('Input Mode'),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                for (final mode in _FoldKeyboardInputMode.values)
+                  _foldKeyboardInputModeTile(mode, dialogSetState),
+                const Divider(color: MyTheme.border),
+                _foldShortcutSettingsTile(
+                    _FoldShortcutCaptureTarget.previous, close),
+                _foldShortcutSettingsTile(
+                    _FoldShortcutCaptureTarget.next, close),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+        clickMaskDismiss: true,
+        backDismiss: true).then((_) => _closeFoldLanguageSettings());
+  }
+
+  void _openFoldOfficialOptions() {
+    setState(() => _showEdit = false);
+    showOptions(context, widget.id, gFFI.dialogManager);
+  }
+
+  void _openFoldMoreActions() {
+    setState(() => _showEdit = false);
+    showActions(widget.id);
+  }
+
+  Future<void> _openFoldChat() async {
+    final isSupportVoiceCall = isAndroid &&
+        await gFFI.invokeMethod("get_value", "KEY_IS_SUPPORT_VOICE_CALL");
+    if (!mounted) {
+      return;
+    }
+    if (isSupportVoiceCall == true) {
+      showChatOptions(widget.id);
+    } else {
+      onPressedTextChat(widget.id);
+    }
+  }
+
+  void _toggleFoldTouchMode() {
+    if (gFFI.ffiModel.isPeerAndroid) {
+      return;
+    }
+    gFFI.ffiModel.toggleTouchMode();
+    final value = gFFI.ffiModel.touchMode ? 'Y' : 'N';
+    bind.mainSetLocalOption(key: kOptionTouchMode, value: value);
+    setState(() {});
+  }
+
+  void _withLocalKeyboardInput(VoidCallback action) {
+    final allowWaylandKeyboard =
+        mainGetPeerBoolOptionSync(widget.id, kPeerOptionAllowWaylandKeyboard);
+    if (shouldShowWaylandKeyboardPrompt(
+      connectionId: sessionId.toString(),
+      isWaylandPeer: _shouldGateKeyboardForWayland(),
+      allowWaylandKeyboardRemembered: allowWaylandKeyboard,
+    )) {
+      inputModel.keyboardInputAllowed = false;
+      showWaylandKeyboardInputWarningDialog(
+        id: widget.id,
+        connectionId: sessionId.toString(),
+        ffi: gFFI,
+        onEnable: () async {
+          if (!mounted) {
+            return;
+          }
+          inputModel.keyboardInputAllowed = true;
+          action();
+        },
+      );
+      return;
+    }
+    inputModel.keyboardInputAllowed = true;
+    action();
+  }
+
+  void _inputLocalKeyboardChar(String char) {
+    final ctrl = inputModel.ctrl;
+    final alt = inputModel.alt;
+    final shift = inputModel.shift;
+    final command = inputModel.command;
+    _withLocalKeyboardInput(() {
+      final oldCtrl = inputModel.ctrl;
+      final oldAlt = inputModel.alt;
+      final oldShift = inputModel.shift;
+      final oldCommand = inputModel.command;
+      inputModel.ctrl = ctrl;
+      inputModel.alt = alt;
+      inputModel.shift = shift;
+      inputModel.command = command;
+      try {
+        if (kDebugMode) {
+          debugPrint(
+            'fold virtual keyboard: mode=Text Injection, '
+            'char=$char, path=inputChar/sessionInputKey',
+          );
+        }
+        inputChar(char);
+      } finally {
+        inputModel.ctrl = oldCtrl;
+        inputModel.alt = oldAlt;
+        inputModel.shift = oldShift;
+        inputModel.command = oldCommand;
+      }
+    });
+  }
+
+  void _inputLocalKeyboardKey(String key) {
+    if (kDebugMode) {
+      debugPrint(
+        'fold virtual keyboard: mode=Key Events, '
+        'key=$key, path=sessionInputKey',
+      );
+    }
+    _withLocalKeyboardInput(() => inputModel.inputKey(key));
+  }
+
+  void _inputLocalKeyboardRemoteImeKey(String keyName, int usbHid) {
+    final ctrl = inputModel.ctrl;
+    final alt = inputModel.alt;
+    final shift = inputModel.shift;
+    final command = inputModel.command;
+    _withLocalKeyboardInput(() {
+      unawaited(_queueFoldRemoteImeAction(
+        () => _sendFoldRemoteImeKeySequence(
+          keyName,
+          usbHid,
+          ctrl: ctrl,
+          alt: alt,
+          shift: shift,
+          command: command,
+        ),
+      ));
+    });
+  }
+
+  void _inputLocalKeyboardCombo(
+    String key, {
+    bool ctrl = false,
+    bool alt = false,
+    bool shift = false,
+    bool command = false,
+  }) {
+    _withLocalKeyboardInput(() {
+      unawaited(_queueFoldRemoteImeAction(
+        () => _sendFoldShortcutSafely(
+          _FoldKeyShortcut(
+            key: key,
+            ctrl: ctrl,
+            alt: alt,
+            shift: shift,
+            command: command,
+          ),
+          reason: 'combo',
+        ),
+      ));
+    });
+  }
+
+  void _toggleFoldTrackpadPlacement() {
+    setState(() {
+      _foldTrackpadPlacement = _foldTrackpadPlacement == _TrackpadPlacement.left
+          ? _TrackpadPlacement.right
+          : _TrackpadPlacement.left;
+    });
+  }
+
+  void _persistFoldRemotePaneRatio(double ratio) {
+    unawaited(bind.mainSetLocalOption(
+      key: _kFoldRemotePaneRatioOption,
+      value: ratio.toStringAsFixed(4),
+    ));
+  }
+
+  bool get _isFoldPaneResizeMode => _foldResizePreviewRemotePaneRatio != null;
+
+  String _foldPaneRatioLabel(double remoteRatio) {
+    final remotePercent = (remoteRatio * 100).round();
+    final inputPercent = 100 - remotePercent;
+    return '${translate('Remote Pane')} $remotePercent% / '
+        '${translate('Input Pane')} $inputPercent%';
+  }
+
+  void _toggleFoldPaneResizeMode() {
+    if (_isFoldPaneResizeMode) {
+      _cancelFoldPaneResize();
+      return;
+    }
+    _startFoldPaneResize();
+  }
+
+  void _startFoldPaneResize() {
+    setState(() {
+      _foldResizePreviewRemotePaneRatio = _foldRemotePaneRatio;
+    });
+  }
+
+  void _updateFoldPaneResize(
+    Axis splitAxis,
+    Size size,
+    DragUpdateDetails details,
+  ) {
+    final totalExtent = splitAxis == Axis.horizontal ? size.width : size.height;
+    if (totalExtent <= 0) {
+      return;
+    }
+    final delta =
+        splitAxis == Axis.horizontal ? details.delta.dx : details.delta.dy;
+    final current = _foldResizePreviewRemotePaneRatio ?? _foldRemotePaneRatio;
+    setState(() {
+      _foldResizePreviewRemotePaneRatio =
+          _clampFoldRemotePaneRatio(current + delta / totalExtent);
+    });
+  }
+
+  void _endFoldPaneResize() {
+    final previewRatio = _foldResizePreviewRemotePaneRatio;
+    if (previewRatio == null) {
+      return;
+    }
+    final nextRatio = _clampFoldRemotePaneRatio(previewRatio);
+    setState(() {
+      _foldRemotePaneRatio = nextRatio;
+      _foldResizePreviewRemotePaneRatio = null;
+    });
+    _persistFoldRemotePaneRatio(nextRatio);
+  }
+
+  void _cancelFoldPaneResize() {
+    if (_foldResizePreviewRemotePaneRatio == null) {
+      return;
+    }
+    setState(() {
+      _foldResizePreviewRemotePaneRatio = null;
+    });
+  }
+
+  Widget? _foldInputToolsBar() {
+    // Fold mode migrates the original blue bottom toolbar into the Input Pane
+    // toolbar, so no separate bottom tools bar is rendered here.
+    return null;
+  }
+
+  Widget _buildBodyForMobileWithTouchRegion() {
+    if (_shouldUseFoldableSplitKeyboard(context)) {
+      return getBodyForMobile();
+    }
+    return RawTouchGestureDetectorRegion(
+      child: getBodyForMobile(),
+      ffi: gFFI,
+    );
+  }
+
   Widget getBodyForMobile() {
+    final useSplitKeyboard = _shouldUseFoldableSplitKeyboard(context);
     final keyboardIsVisible = keyboardVisibilityController.isVisible;
+    if (useSplitKeyboard) {
+      _disableRemoteSoftKeyboardForSplitMode();
+      gFFI.dialogManager.hideMobileActionsOverlay(store: false);
+      gFFI.cursorModel.keyHelpToolsVisibilityChanged(null, false);
+      return _buildFoldableSplitKeyboardBody(context);
+    }
+    _clearFoldCanvasViewport();
     return Container(
         color: MyTheme.canvasColor,
-        child: Stack(children: () {
-          final paints = [
-            ImagePaint(ffiModel: gFFI.ffiModel),
-            Positioned(
-              top: 10,
-              right: 10,
-              child: QualityMonitor(gFFI.qualityMonitorModel),
+        child: _buildRemoteCanvasStack(
+          includeHiddenTextInput: true,
+          keyboardIsVisible: keyboardIsVisible,
+        ));
+  }
+
+  Widget _buildFoldableSplitKeyboardBody(BuildContext context) {
+    final splitAxis = _foldPaneSplitAxis(context);
+    final canToggleTouchMode = !gFFI.ffiModel.isPeerAndroid &&
+        !gFFI.ffiModel.viewOnly &&
+        gFFI.ffiModel.keyboard;
+    final shortcutCaptureLabel = _foldShortcutCaptureTarget == null
+        ? null
+        : _foldLanguageShortcutTitle(_foldShortcutSlotForTarget(
+            _foldLanguageSwitchMode,
+            _foldShortcutCaptureTarget!,
+          ));
+    final shortcutCapturePreview =
+        _foldShortcutCaptureValue?.displayLabelFor(_foldModifierDisplayStyle) ??
+            translate('No shortcut selected');
+    final inputPane = _FoldInputPane(
+      splitAxis: splitAxis,
+      trackpadPlacement: _foldTrackpadPlacement,
+      touchpadRatio: _foldTouchpadPaneRatio,
+      ffi: gFFI,
+      toolsBar: _foldInputToolsBar(),
+      inputRevision: _foldInputRevision,
+      displayMode: _foldRemoteDisplayMode,
+      fitRemoteResolutionEnabled:
+          _canFitRemoteResolutionToFoldPane && _fitRemoteResolutionToFoldPane,
+      canFitRemoteResolution: _canFitRemoteResolutionToFoldPane,
+      onToggleTrackpadPlacement: _toggleFoldTrackpadPlacement,
+      onModifierChanged: _notifyFoldInputStateChanged,
+      onDisplayModeSelected: (mode) {
+        setState(() => _foldRemoteDisplayMode = mode);
+      },
+      onToggleFitRemoteResolution: _toggleFitRemoteResolutionToFoldPane,
+      displayModeLabel: _foldDisplayModeLabel,
+      displayModeIcon: _foldDisplayModeIcon,
+      modifierDisplayStyle: _foldModifierDisplayStyle,
+      paneResizeMode: _isFoldPaneResizeMode,
+      paneRatioLabel: _foldPaneRatioLabel(
+        _foldResizePreviewRemotePaneRatio ?? _foldRemotePaneRatio,
+      ),
+      onTogglePaneResizeMode: _toggleFoldPaneResizeMode,
+      languageSwitchMode: _foldLanguageSwitchMode,
+      previousLanguageTooltip:
+          _foldPreviousLanguageTooltip(_foldLanguageSwitchMode),
+      nextLanguageTooltip: _foldNextLanguageTooltip(_foldLanguageSwitchMode),
+      onPreviousLanguagePressed: () => _sendFoldLanguageShortcut(
+        _foldLanguageShortcut(_foldShortcutSlotForTarget(
+          _foldLanguageSwitchMode,
+          _FoldShortcutCaptureTarget.previous,
+        )),
+      ),
+      onNextLanguagePressed: () => _sendFoldLanguageShortcut(
+        _foldLanguageShortcut(_foldShortcutSlotForTarget(
+          _foldLanguageSwitchMode,
+          _FoldShortcutCaptureTarget.next,
+        )),
+      ),
+      onLanguageSettingsPressed: _showFoldLanguageSettings,
+      onOfficialOptionsPressed: _openFoldOfficialOptions,
+      onClosePressed: () => clientClose(sessionId, gFFI),
+      onMoreActionsPressed: _openFoldMoreActions,
+      onChatPressed: () => unawaited(_openFoldChat()),
+      onToggleTouchMode: _toggleFoldTouchMode,
+      canToggleTouchMode: canToggleTouchMode,
+      touchMode: gFFI.ffiModel.touchMode,
+      shortcutCaptureLabel: shortcutCaptureLabel,
+      shortcutCapturePreview: shortcutCapturePreview,
+      canSaveShortcutCapture: _foldShortcutCaptureValue != null,
+      onSaveShortcutCapture: _saveFoldShortcutCapture,
+      onCancelShortcutCapture: _cancelFoldShortcutCapture,
+      keyboard: _LocalRemoteKeyboard(
+        ffi: gFFI,
+        modifierDisplayStyle: _foldModifierDisplayStyle,
+        onCharacter: _inputLocalKeyboardChar,
+        onSpecialKey: _inputLocalKeyboardKey,
+        onRemoteImeKeyEvent: _inputLocalKeyboardRemoteImeKey,
+        onComboKey: _inputLocalKeyboardCombo,
+        onModifierChanged: _notifyFoldInputStateChanged,
+        isCapturingShortcut: _foldShortcutCaptureTarget != null,
+        onCaptureShortcutKey: _captureFoldShortcutKey,
+        remoteImeModeEnabled:
+            _foldKeyboardInputMode == _FoldKeyboardInputMode.remoteImeKeyEvents,
+      ),
+    );
+    return Container(
+      color: Colors.black,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final size = Size(
+          constraints.maxWidth.isFinite
+              ? constraints.maxWidth
+              : MediaQuery.of(context).size.width,
+          constraints.maxHeight.isFinite
+              ? constraints.maxHeight
+              : MediaQuery.of(context).size.height,
+        );
+        final activeRemoteRatio = _clampFoldRemotePaneRatio(
+            _foldResizePreviewRemotePaneRatio ?? _foldRemotePaneRatio);
+        final remoteRect = splitAxis == Axis.horizontal
+            ? Rect.fromLTWH(0, 0, size.width * activeRemoteRatio, size.height)
+            : Rect.fromLTWH(0, 0, size.width, size.height * activeRemoteRatio);
+        final inputRect = splitAxis == Axis.horizontal
+            ? Rect.fromLTWH(
+                remoteRect.right, 0, size.width - remoteRect.right, size.height)
+            : Rect.fromLTWH(0, remoteRect.bottom, size.width,
+                size.height - remoteRect.bottom);
+        return Stack(
+          children: [
+            Positioned.fromRect(
+              rect: remoteRect,
+              child: _buildFoldRemotePane(),
             ),
-            KeyHelpTools(
-                keyboardIsVisible: keyboardIsVisible,
-                showGestureHelp: _showGestureHelp),
-            SizedBox(
-              width: 0,
-              height: 0,
-              child: !_showEdit
-                  ? Container()
-                  : TextFormField(
-                      textInputAction: TextInputAction.newline,
-                      autocorrect: false,
-                      // Flutter 3.16.9 Android.
-                      // `enableSuggestions` causes secure keyboard to be shown.
-                      // https://github.com/flutter/flutter/issues/139143
-                      // https://github.com/flutter/flutter/issues/146540
-                      // enableSuggestions: false,
-                      autofocus: true,
-                      focusNode: _mobileFocusNode,
-                      maxLines: null,
-                      controller: _textController,
-                      // trick way to make backspace work always
-                      keyboardType: TextInputType.multiline,
-                      // `onChanged` may be called depending on the input method if this widget is wrapped in
-                      // `Focus(onKeyEvent: ..., child: ...)`
-                      // For `Backspace` button in the soft keyboard:
-                      // en/fr input method:
-                      //      1. The button will not trigger `onKeyEvent` if the text field is not empty.
-                      //      2. The button will trigger `onKeyEvent` if the text field is empty.
-                      // ko/zh/ja input method: the button will trigger `onKeyEvent`
-                      //                     and the event will not popup if `KeyEventResult.handled` is returned.
-                      onChanged: handleSoftKeyboardInput,
-                    ).workaroundFreezeLinuxMint(),
+            Positioned.fromRect(
+              rect: inputRect,
+              child: inputPane,
             ),
-          ];
-          if (showCursorPaint) {
-            paints.add(CursorPaint(widget.id));
-          }
-          if (gFFI.ffiModel.touchMode) {
-            paints.add(FloatingMouse(
-              ffi: gFFI,
-            ));
-          } else {
-            paints.add(FloatingMouseWidgets(
-              ffi: gFFI,
-            ));
-          }
-          return paints;
-        }()));
+            if (_foldResizePreviewRemotePaneRatio != null) ...[
+              _foldPaneResizePreview(remoteRect),
+              _foldPaneResizePreview(inputRect),
+              _foldPaneRatioOverlay(
+                  splitAxis, size, remoteRect, activeRemoteRatio),
+            ],
+            _foldPaneDividerLine(splitAxis, size, remoteRect),
+            if (_isFoldPaneResizeMode)
+              _foldPaneResizeHitArea(splitAxis, size, remoteRect),
+            if (_isFoldPaneResizeMode)
+              _foldPaneResizeHandle(splitAxis, size, remoteRect),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _foldPaneResizePreview(Rect rect) {
+    return Positioned.fromRect(
+      rect: rect,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0x803B82F6),
+            border: Border.all(color: const Color(0xCC93C5FD), width: 1),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _foldPaneDividerLine(Axis splitAxis, Size size, Rect remoteRect) {
+    final isHorizontal = splitAxis == Axis.horizontal;
+    return Positioned(
+      left: isHorizontal ? remoteRect.right - 0.5 : 0,
+      top: isHorizontal ? 0 : remoteRect.bottom - 0.5,
+      width: isHorizontal ? 1 : size.width,
+      height: isHorizontal ? size.height : 1,
+      child: const IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(color: Color(0xFF4B4D50)),
+        ),
+      ),
+    );
+  }
+
+  double _foldRatioOverlayOffset(double value, double total, double extent) {
+    final maxOffset = total - extent - 8.0;
+    if (maxOffset < 8.0) {
+      return ((total - extent) / 2).clamp(0.0, double.infinity).toDouble();
+    }
+    return value.clamp(8.0, maxOffset).toDouble();
+  }
+
+  Widget _foldPaneRatioOverlay(
+    Axis splitAxis,
+    Size size,
+    Rect remoteRect,
+    double remoteRatio,
+  ) {
+    final isHorizontal = splitAxis == Axis.horizontal;
+    const overlayWidth = 220.0;
+    const overlayHeight = 28.0;
+    return Positioned(
+      left: isHorizontal
+          ? _foldRatioOverlayOffset(
+              remoteRect.right - overlayWidth / 2,
+              size.width,
+              overlayWidth,
+            )
+          : _foldRatioOverlayOffset(
+              (size.width - overlayWidth) / 2,
+              size.width,
+              overlayWidth,
+            ),
+      top: isHorizontal
+          ? 10
+          : _foldRatioOverlayOffset(
+              remoteRect.bottom - overlayHeight - 8,
+              size.height,
+              overlayHeight,
+            ),
+      width: overlayWidth,
+      height: overlayHeight,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xCC1B1D1F),
+            border: Border.all(color: const Color(0xFF93C5FD)),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Center(
+            child: Text(
+              _foldPaneRatioLabel(remoteRatio),
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _foldPaneResizeHitArea(Axis splitAxis, Size size, Rect remoteRect) {
+    final isHorizontal = splitAxis == Axis.horizontal;
+    return Positioned(
+      left: isHorizontal ? remoteRect.right - _foldResizeHitExtent / 2 : 0,
+      top: isHorizontal ? 0 : remoteRect.bottom - _foldResizeHitExtent / 2,
+      width: isHorizontal ? _foldResizeHitExtent : size.width,
+      height: isHorizontal ? size.height : _foldResizeHitExtent,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onPanStart: (_) => _startFoldPaneResize(),
+        onPanUpdate: (details) =>
+            _updateFoldPaneResize(splitAxis, size, details),
+        onPanEnd: (_) => _endFoldPaneResize(),
+        onPanCancel: _cancelFoldPaneResize,
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+
+  Widget _foldPaneResizeHandle(Axis splitAxis, Size size, Rect remoteRect) {
+    final isHorizontal = splitAxis == Axis.horizontal;
+    final handleWidth = isHorizontal ? 22.0 : 44.0;
+    final handleHeight = isHorizontal ? 44.0 : 22.0;
+    return Positioned(
+      left: isHorizontal
+          ? remoteRect.right - handleWidth / 2
+          : (size.width - handleWidth) / 2,
+      top: isHorizontal
+          ? (size.height - handleHeight) / 2
+          : remoteRect.bottom - handleHeight / 2,
+      width: handleWidth,
+      height: handleHeight,
+      child: Tooltip(
+        message: translate('Drag to Resize'),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) => _startFoldPaneResize(),
+          onPanUpdate: (details) =>
+              _updateFoldPaneResize(splitAxis, size, details),
+          onPanEnd: (_) => _endFoldPaneResize(),
+          onPanCancel: _cancelFoldPaneResize,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xE61B1D1F),
+              border: Border.all(color: const Color(0xFF93C5FD)),
+              borderRadius: BorderRadius.circular(999),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x55000000),
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Center(
+              child: RotatedBox(
+                quarterTurns: isHorizontal ? 1 : 0,
+                child: const Text(
+                  '...',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFoldRemotePane() {
+    return LayoutBuilder(builder: (context, constraints) {
+      final viewportSize = Size(constraints.maxWidth, constraints.maxHeight);
+      _syncFoldCanvasViewport(viewportSize);
+      return DecoratedBox(
+        decoration: const BoxDecoration(color: Colors.black),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: ClipRect(
+                child: RawTouchGestureDetectorRegion(
+                  child: _buildRemoteCanvasStack(
+                    includeHiddenTextInput: false,
+                    keyboardIsVisible: false,
+                    fillCanvasPainters: true,
+                    includeKeyHelpTools: false,
+                  ),
+                  ffi: gFFI,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
+  Widget _buildRemoteCanvasStack({
+    required bool includeHiddenTextInput,
+    required bool keyboardIsVisible,
+    bool fillCanvasPainters = false,
+    bool includeKeyHelpTools = true,
+  }) {
+    return Stack(children: () {
+      final paints = [
+        fillCanvasPainters
+            ? Positioned.fill(child: ImagePaint(ffiModel: gFFI.ffiModel))
+            : ImagePaint(ffiModel: gFFI.ffiModel),
+        Positioned(
+          top: 10,
+          right: 10,
+          child: QualityMonitor(gFFI.qualityMonitorModel),
+        ),
+        if (includeKeyHelpTools)
+          KeyHelpTools(
+              keyboardIsVisible: keyboardIsVisible,
+              showGestureHelp: _showGestureHelp),
+        if (includeHiddenTextInput)
+          SizedBox(
+            width: 0,
+            height: 0,
+            child: !_showEdit
+                ? Container()
+                : TextFormField(
+                    textInputAction: TextInputAction.newline,
+                    autocorrect: false,
+                    // Flutter 3.16.9 Android.
+                    // `enableSuggestions` causes secure keyboard to be shown.
+                    // https://github.com/flutter/flutter/issues/139143
+                    // https://github.com/flutter/flutter/issues/146540
+                    // enableSuggestions: false,
+                    autofocus: true,
+                    focusNode: _mobileFocusNode,
+                    maxLines: null,
+                    controller: _textController,
+                    // trick way to make backspace work always
+                    keyboardType: TextInputType.multiline,
+                    // `onChanged` may be called depending on the input method if this widget is wrapped in
+                    // `Focus(onKeyEvent: ..., child: ...)`
+                    // For `Backspace` button in the soft keyboard:
+                    // en/fr input method:
+                    //      1. The button will not trigger `onKeyEvent` if the text field is not empty.
+                    //      2. The button will trigger `onKeyEvent` if the text field is empty.
+                    // ko/zh/ja input method: the button will trigger `onKeyEvent`
+                    //                     and the event will not popup if `KeyEventResult.handled` is returned.
+                    onChanged: handleSoftKeyboardInput,
+                  ).workaroundFreezeLinuxMint(),
+          ),
+      ];
+      if (showCursorPaint) {
+        paints.add(fillCanvasPainters
+            ? Positioned.fill(child: CursorPaint(widget.id))
+            : CursorPaint(widget.id));
+      }
+      if (gFFI.ffiModel.touchMode) {
+        paints.add(FloatingMouse(
+          ffi: gFFI,
+        ));
+      } else {
+        paints.add(FloatingMouseWidgets(
+          ffi: gFFI,
+        ));
+      }
+      return paints;
+    }());
   }
 
   Widget getBodyForDesktopWithListener() {

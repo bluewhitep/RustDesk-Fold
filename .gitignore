@@ -1,3 +1,30 @@
+# Dotfiles and dot directories are local-only; keep ignore files tracked.
+.*
+!.gitignore
+!.gitmodules
+.github/**
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+!.github/workflows/*.yaml
+!.github/actions/
+!.github/actions/**
+!.github/ISSUE_TEMPLATE/
+!.github/ISSUE_TEMPLATE/**
+!.github/PULL_REQUEST_TEMPLATE.md
+!.github/pull_request_template.md
+!.github/PULL_REQUEST_TEMPLATE/
+!.github/PULL_REQUEST_TEMPLATE/**
+!.github/DISCUSSION_TEMPLATE/
+!.github/DISCUSSION_TEMPLATE/**
+!.github/dependabot.yml
+!.github/CODEOWNERS
+!.github/FUNDING.yml
+!.github/SECURITY.md
+!.github/CODE_OF_CONDUCT.md
+!.github/CONTRIBUTING.md
+!.github/SUPPORT.md
+
 /build
 /target
 .vscode
@@ -30,6 +57,8 @@ appimage/*.AppImage
 appimage/appimage-build
 appimage/*.xz
 # flutter
+flutter/android/local.properties
+flutter/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
 flutter/linux/build/**
 flutter/linux/cmake-build-debug/**
 # flatpak
@@ -56,3 +85,19 @@ vcpkg_installed
 flutter/lib/generated_plugin_registrant.dart
 libsciter.dylib
 flutter/web/
+
+# Local Android signing material
+key.properties
+*.jks
+.dev/keystores/
+
+# Android Fold local build outputs
+/flutter/.dart_tool/
+/flutter/.flutter-plugins
+/flutter/.flutter-plugins-dependencies
+/flutter/build/
+/flutter/android/.gradle/
+/flutter/android/build/
+/flutter/android/app/build/
+/flutter/android/app/src/main/jniLibs/
+/dist/release/

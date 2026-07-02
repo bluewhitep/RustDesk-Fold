@@ -366,8 +366,10 @@ class InputModel {
               !model.isViewCamera) {
             _sideButtonDownModels[mb] = model;
             // Fire-and-forget to avoid blocking the platform channel handler.
-            unawaited(model._sendMouseUnchecked(type, mb).catchError((Object e) {
-              debugPrint('[InputModel] failed to send side button $type for $mb: $e');
+            unawaited(
+                model._sendMouseUnchecked(type, mb).catchError((Object e) {
+              debugPrint(
+                  '[InputModel] failed to send side button $type for $mb: $e');
             }));
           }
         } else {
@@ -377,8 +379,10 @@ class InputModel {
           // release always goes through even if permissions changed.
           final model = _sideButtonDownModels.remove(mb);
           if (model != null) {
-            unawaited(model._sendMouseUnchecked(type, mb).catchError((Object e) {
-              debugPrint('[InputModel] failed to send side button $type for $mb: $e');
+            unawaited(
+                model._sendMouseUnchecked(type, mb).catchError((Object e) {
+              debugPrint(
+                  '[InputModel] failed to send side button $type for $mb: $e');
             }));
           }
         }
@@ -745,6 +749,19 @@ class InputModel {
         return KeyEventResult.ignored;
       }
     }
+    if (kDebugMode) {
+      final data = e.data;
+      final platformDetails = data is RawKeyEventDataAndroid
+          ? 'androidScanCode=${data.scanCode}, androidKeyCode=${data.keyCode}, '
+              'metaState=${data.metaState}'
+          : 'data=$data';
+      debugPrint(
+        'physical keyboard raw: type=${e.runtimeType}, '
+        'logical=${e.logicalKey.keyLabel}/0x${e.logicalKey.keyId.toRadixString(16)}, '
+        'physical=${e.physicalKey.debugName}/0x${e.physicalKey.usbHidUsage.toRadixString(16)}, '
+        'character=${e.character}, $platformDetails',
+      );
+    }
 
     if (_relativeMouse.handleRawKeyEvent(e)) {
       return KeyEventResult.handled;
@@ -829,6 +846,14 @@ class InputModel {
       } else if (isWeb) {
         return KeyEventResult.ignored;
       }
+    }
+    if (kDebugMode) {
+      debugPrint(
+        'physical keyboard key: type=${e.runtimeType}, '
+        'logical=${e.logicalKey.keyLabel}/0x${e.logicalKey.keyId.toRadixString(16)}, '
+        'physical=${e.physicalKey.debugName}/0x${e.physicalKey.usbHidUsage.toRadixString(16)}, '
+        'character=${e.character}',
+      );
     }
     if (isWindows || isLinux) {
       // Ignore meta keys. Because flutter window will loose focus if meta key is pressed.
@@ -1660,7 +1685,8 @@ class InputModel {
     if (e is PointerScrollEvent) {
       final rawDx = e.scrollDelta.dx;
       final rawDy = e.scrollDelta.dy;
-      final dominantDelta = rawDx.abs() > rawDy.abs() ? rawDx.abs() : rawDy.abs();
+      final dominantDelta =
+          rawDx.abs() > rawDy.abs() ? rawDx.abs() : rawDy.abs();
       final isSmooth = dominantDelta < 1;
       final nowUs = DateTime.now().microsecondsSinceEpoch;
       final dtUs = _lastWheelTsUs == 0 ? 0 : nowUs - _lastWheelTsUs;

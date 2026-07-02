@@ -11,7 +11,7 @@ import android.widget.Toast
 import com.hjq.permissions.XXPermissions
 import io.flutter.embedding.android.FlutterActivity
 
-const val DEBUG_BOOT_COMPLETED = "com.carriez.flutter_hbb.DEBUG_BOOT_COMPLETED"
+const val DEBUG_BOOT_COMPLETED = "com.rustdesk.fold.DEBUG_BOOT_COMPLETED"
 
 class BootReceiver : BroadcastReceiver() {
     private val logTag = "tagBootReceiver"
