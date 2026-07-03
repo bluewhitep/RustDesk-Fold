@@ -9,21 +9,26 @@ every upstream sync.
 ## Current Branch Shape
 
 - Active Fold branch: `foldable-split-keyboard-main`
-- Official upstream remote: `origin` (`https://github.com/rustdesk/rustdesk.git`)
-- Personal push remote: `github`
-- Manual backup remote: `backup`
+- Public repository remote: `origin` usually points to this RustDesk Fold
+  repository.
+- Official upstream remote: add `upstream`
+  (`https://github.com/rustdesk/rustdesk.git`) in maintainer workspaces.
+- Optional private backup remote: `backup`
 - Stable Fold baseline tag: `fold-stable-20260613`
 
-The Fold stack is currently expected to sit above `master` / `origin/master`.
-Before rebasing, confirm the tree is clean:
+The release build does not fetch the latest upstream RustDesk source during
+compilation. Maintainers must update the checked-out source first, validate it,
+and then build the APK.
+
+The Fold stack is expected to sit above the official upstream default branch.
+Before rebasing, confirm the tree is clean and the upstream remote exists:
 
 ```bash
 cd <workspace>/rustdesk-fold
 git status
 git branch --show-current
-git log --oneline --decorate master..HEAD
-git log --oneline --decorate origin/master..HEAD
-git diff --name-status master..HEAD
+git remote -v
+git ls-remote --heads upstream master
 ```
 
 ## One-Time Conflict Memory
@@ -38,28 +43,32 @@ git config --get rerere.enabled
 
 ## Upgrade Procedure
 
-Capture the old patch stack before updating `master`:
+Capture the current patch stack before updating from upstream:
 
 ```bash
 cd <workspace>/rustdesk-fold
 git status
-old_base=$(git merge-base master HEAD)
+git remote get-url upstream >/dev/null 2>&1 || \
+  git remote add upstream https://github.com/rustdesk/rustdesk.git
+git fetch upstream
+old_base=$(git merge-base upstream/master HEAD)
 old_head=$(git rev-parse HEAD)
 ```
 
-Fetch official upstream and update the local `master` with a fast-forward only:
+Create an update branch and rebase the Fold snapshot onto the latest official
+RustDesk `master`:
 
 ```bash
-git fetch origin
-git checkout master
-git merge --ff-only origin/master
+git fetch upstream
+git switch -c chore/update-rustdesk-x-y-z
+git rebase upstream/master
 ```
 
-Rebase the Fold branch onto the new official base:
+If you already created the update branch earlier, switch to it instead:
 
 ```bash
-git checkout foldable-split-keyboard-main
-git rebase master
+git switch chore/update-rustdesk-x-y-z
+git rebase upstream/master
 ```
 
 If conflicts occur:
@@ -73,7 +82,7 @@ If conflicts occur:
 After a successful rebase, compare the old patch stack with the new one:
 
 ```bash
-git range-diff "$old_base..$old_head" "master..HEAD"
+git range-diff "$old_base..$old_head" "upstream/master..HEAD"
 ```
 
 The range-diff should show the Fold commits as equivalent or explainable. If a

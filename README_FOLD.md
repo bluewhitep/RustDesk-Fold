@@ -43,8 +43,8 @@ root-level Markdown files in this repository. Add new Fold maintainer documents
 at the project root and link them from this section.
 
 - [RELEASE_FOLD_MANUAL.md](RELEASE_FOLD_MANUAL.md): single source for manual
-  maintainer review, trusted local APK build, device test install,
-  verification, tag, and GitHub Release process.
+  maintainer review, trusted local APK build, direct APK install, maintainer
+  ADB testing, verification, tag, and GitHub Release process.
 - [FOLD_PUBLIC_IMPORT_STRATEGY.md](FOLD_PUBLIC_IMPORT_STRATEGY.md): public
   baseline, clean-history import, and upstream submodule tradeoff plan.
 - [UPGRADE_FOLD.md](UPGRADE_FOLD.md): manual upstream rebase and upgrade flow.
@@ -55,10 +55,14 @@ This repository does not use GitHub Actions for release builds. Do not add
 workflow files under `.github/workflows/`, and do not use a public repository
 self-hosted runner for untrusted fork or pull request code.
 
+The build uses the source tree already checked out in this repository; it does
+not fetch RustDesk upstream code during compilation. Maintainers update the Fold
+source from upstream first, then build and verify a release APK.
+
 The active Fold branch is `foldable-split-keyboard-main`. See
 [RELEASE_FOLD_MANUAL.md](RELEASE_FOLD_MANUAL.md) for manual maintainer review,
-trusted local APK build, APK verification, state-preserving ADB install, tag
-creation, APK naming, and GitHub Release publication.
+trusted local APK build, APK verification, direct APK install, maintainer ADB
+testing, tag creation, APK naming, and GitHub Release publication.
 
 ## Upstream Sync
 

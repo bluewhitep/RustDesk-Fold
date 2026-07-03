@@ -34,6 +34,11 @@ This is an independent customized build. It is not an official RustDesk release.
 Release builds are produced manually from a trusted local maintainer
 environment. GitHub Actions are not used as the release gate.
 
+The build uses the source code already checked out in this repository. It does
+not fetch the latest RustDesk upstream code during compilation. Maintainers
+must update the source tree from upstream RustDesk first, validate the Fold
+changes, and only then build a new APK.
+
 Use a real build path without shell-sensitive characters such as parentheses
 when preparing native Android dependencies.
 
@@ -53,14 +58,19 @@ bash tools/release/verify_android_release_apk.sh \
 
 ## Install
 
-Install only the release APK for device testing:
+For first-time Android users, install the release APK directly on the device:
 
-```bash
-adb install -r flutter/build/app/outputs/flutter-apk/app-release.apk
-```
+1. Download the `RustDesk-Fold-...-arm64-v8a-release.apk` file from this
+   repository's GitHub Releases.
+2. Open the APK on the Android device.
+3. If Android prompts for permission, allow APK installation from that app.
+4. Tap Install or Update.
 
-Do not install debug APKs, uninstall `com.rustdesk.fold`, or clear app data
-during normal update testing.
+Direct APK install and `adb install -r` both preserve app data when the APK uses
+the same `com.rustdesk.fold` application ID and the same release signing key.
+
+ADB install is only a maintainer/developer test path. Do not install debug APKs,
+uninstall `com.rustdesk.fold`, or clear app data during normal update testing.
 
 ## Documentation
 

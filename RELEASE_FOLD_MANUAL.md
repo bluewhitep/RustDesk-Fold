@@ -78,6 +78,11 @@ from `<workspace>/rustdesk-fold`.
 Install Flutter, Rust, `cargo-ndk`, Android SDK, and Android NDK first.
 `ANDROID_NDK_HOME` or `ANDROID_NDK_ROOT` must point to the installed NDK.
 
+The build script compiles the source tree that is already checked out. It does
+not fetch latest RustDesk upstream code during compilation. To build from a
+newer upstream RustDesk version, complete the upstream update flow in
+[UPGRADE_FOLD.md](UPGRADE_FOLD.md) first, then return to this build flow.
+
 From the workspace root, load the repo-local environment and enter the source
 checkout:
 
@@ -131,11 +136,24 @@ cp -f flutter/build/app/outputs/flutter-apk/app-release.apk \
   ../artifacts/RustDesk-Fold-public-snapshot-arm64-v8a-release.apk
 ```
 
-## Device Test Install
+## User APK Install
+
+First-time users should install the release APK directly on the Android device:
+
+1. Download `RustDesk-Fold-<tag>-arm64-v8a-release.apk` from GitHub Releases.
+2. Open the APK on the Android device.
+3. If Android asks, allow APK installation from the browser or file manager.
+4. Tap Install. For later updates, tap Update without uninstalling the app.
+
+Direct APK install preserves app data when the APK keeps the same
+`com.rustdesk.fold` application ID and the same release signing key.
+
+## Maintainer ADB Install
 
 Install only the release APK. Do not install `app-debug.apk`, do not uninstall
 `com.rustdesk.fold`, and do not clear app data during state-preserving device
-testing.
+testing. ADB is optional and intended for maintainer or developer validation,
+not as the normal first-time user install path.
 
 From the workspace root:
 

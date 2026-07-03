@@ -42,10 +42,14 @@ build, update, and audit. It is not the first public release path.
 
 When updating to a newer upstream RustDesk baseline:
 
-1. review upstream changes;
-2. apply the Fold patch set;
-3. review Android permissions, package identity, signing configuration,
+1. fetch official RustDesk into the maintainer workspace;
+2. review upstream changes;
+3. apply or rebase the Fold patch set;
+4. review Android permissions, package identity, signing configuration,
    dependency changes, and sensitive data;
-4. run `flutter analyze`;
-5. build the release APK in a trusted local environment;
-6. verify the APK before tagging or publishing.
+5. run `flutter analyze`;
+6. build the release APK in a trusted local environment;
+7. verify the APK before tagging or publishing.
+
+The release build uses the source tree already checked out in this repository.
+It does not fetch latest upstream RustDesk code during compilation.
