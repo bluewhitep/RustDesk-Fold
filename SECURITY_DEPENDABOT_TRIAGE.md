@@ -37,6 +37,12 @@ Fixing these alerts should not prevent this repository from continuing to use
 official RustDesk upstream source. It will, however, create a downstream
 security-maintenance delta in lockfiles and possibly dependency constraints.
 
+The `openssl` high-alert fix requires a minimum Rust toolchain increase for this
+experiment branch. `openssl 0.10.79` is the lowest version that satisfies the
+currently reported `rust-openssl` high alert requiring `>= 0.10.79`, and it
+requires Rust 1.80. The public snapshot baseline declares Rust 1.75, so this is
+an explicit compatibility tradeoff rather than a silent lockfile-only update.
+
 Preferred fix strategy:
 
 1. Keep fixes on a separate development branch first.
@@ -59,6 +65,58 @@ Preferred fix strategy:
 | `libgit2-sys` | GHSA-22q8-ghmq-63vf | `Cargo.lock` | `libgit2-sys 0.14.2+1.5.1` | Build-time path, not APK runtime. `cargo tree --target all --features flutter,hwcodec -i libgit2-sys` shows `libgit2-sys -> git2 -> shadow-rs -> keepawake -> rustdesk`. | Upstream inherited build-dependency chain. Not expected to affect Android runtime behavior, but can affect build metadata tooling. | Try a compatible `git2` / `libgit2-sys` update. Stop if it requires broad upstream source changes. |
 | `quinn-proto` | GHSA-6xvm-j4wr-6v98 | `Cargo.lock` | `quinn-proto 0.11.13` | Not selected in the checked Android target graph. `cargo tree --target aarch64-linux-android --features flutter,hwcodec -i quinn-proto` printed nothing. | Upstream inherited and currently appears to be stale or non-selected for the Android build target checked here. | Refresh the relevant lockfile/dependency graph if possible. If still unused, document as non-APK-path before dismissing. |
 | `mio` | GHSA-r8w9-5wcg-vfj7 | `libs/virtual_display/Cargo.lock` | nested lockfile contains `mio 0.8.5`; current `cargo tree --manifest-path libs/virtual_display/Cargo.toml -i mio` resolves `mio 1.0.3`. | Not Android APK runtime; `virtual_display` is Windows-focused in the root manifest. | Upstream inherited nested lockfile alert. Current manifest resolution suggests the nested lockfile may be stale relative to current dependency resolution. | Refresh or update `libs/virtual_display/Cargo.lock`, then confirm the alert clears. |
+
+## Experiment Branch Result
+
+Branch: `experiment/dependabot-high-alert-fixes`
+
+Applied changes:
+
+- Raised root `Cargo.toml` `rust-version` from `1.75` to `1.80`.
+- Updated `openssl` to `0.10.79`.
+- Updated `openssl-sys` to `0.9.115`; newer `0.9.116` and `0.9.117` require
+  Rust 1.80, and `0.9.115` works with the selected `openssl 0.10.79` lockfile.
+- Updated `rustls-webpki` to `0.103.13`.
+- Updated `rustls-pki-types` to `1.15.0`.
+- Updated `tokio-rustls` to `0.26.4`.
+- Updated `quinn-proto` to `0.11.15`.
+- Updated Linux-only `fuser` from `0.15` to `0.16`.
+- Replaced the direct Linux-only `hbb_common` dependency on `users` with
+  `uzers 0.12.2` while preserving the crate name `users` in source.
+- Removed stale `libs/virtual_display/Cargo.lock`; `libs/virtual_display` is a
+  workspace member, so the root `Cargo.lock` is the lockfile used by normal
+  workspace builds.
+
+Remaining high-alert constraints after the experiment:
+
+- `users 0.10.0` remains through `pam v0.7.0`
+  (`pam -> users`). It is Linux-only and `cargo tree --target
+  aarch64-linux-android --features flutter,hwcodec -i users` prints nothing.
+  Fixing this fully requires changing or forking the upstream `pam` dependency.
+- `libgit2-sys 0.14.2+1.5.1` remains through
+  `keepawake -> shadow-rs -> git2 -> libgit2-sys`. `keepawake` is declared only
+  for macOS/Linux and `cargo tree --target aarch64-linux-android --features
+  flutter,hwcodec -i libgit2-sys` prints nothing. Fixing this fully requires
+  changing or forking the upstream `keepawake` dependency chain.
+
+Android APK validation:
+
+- Build command: `bash tools/dev/build_android_arm64_release.sh`
+- Build environment override:
+  - `VCPKG_ROOT=/tmp/rustdesk-fold-vcpkg.YuEc04/vcpkg`
+  - `CARGO_TARGET_DIR=/tmp/rustdesk-fold-target-dependabot-high`
+  - `TMPDIR=/tmp/rustdesk-fold-tmp-dependabot-high`
+- Rust toolchain used: `rustc 1.80.0`
+- Build result: passed.
+- Build time: `2m27.435s`.
+- APK verifier result: passed.
+- Verified APK identity:
+  - application ID: `com.rustdesk.fold`
+  - application label: `RustDesk Fold`
+  - target SDK: `35`
+  - native ABI: `arm64-v8a`
+- Test artifact:
+  `artifacts/RustDesk-Fold-dependabot-high-alert-fixes-arm64-v8a-release-test.apk`
 
 ## Release Gate
 
