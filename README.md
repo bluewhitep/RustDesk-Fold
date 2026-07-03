@@ -82,6 +82,8 @@ uninstall `com.rustdesk.fold`, or clear app data during normal update testing.
   flow.
 - [FOLD_PUBLIC_IMPORT_STRATEGY.md](FOLD_PUBLIC_IMPORT_STRATEGY.md): clean public
   snapshot and future upstream-submodule experiment plan.
+- [SECURITY_DEPENDABOT_TRIAGE.md](SECURITY_DEPENDABOT_TRIAGE.md): high-severity
+  Dependabot alert triage and dependency-fix compatibility notes.
 - [UPSTREAM.md](UPSTREAM.md): upstream RustDesk attribution and baseline notes.
 
 ## Release Policy
