@@ -48,6 +48,8 @@ at the project root and link them from this section.
 - [FOLD_PUBLIC_IMPORT_STRATEGY.md](FOLD_PUBLIC_IMPORT_STRATEGY.md): public
   baseline, clean-history import, and upstream submodule tradeoff plan.
 - [UPGRADE_FOLD.md](UPGRADE_FOLD.md): manual upstream rebase and upgrade flow.
+- [KNOWN_ISSUES_FOLD.md](KNOWN_ISSUES_FOLD.md): Fold-specific known issues
+  found during maintainer device testing.
 
 ## Manual Build, Install, and Release Policy
 
