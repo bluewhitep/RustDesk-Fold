@@ -1,0 +1,4 @@
+[tool.git_guard]
+upstream_open_source_paths = [
+  "third_party/rustdesk-fold-patches/**",
+]

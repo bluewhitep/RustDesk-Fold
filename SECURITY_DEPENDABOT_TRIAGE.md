@@ -86,18 +86,43 @@ Applied changes:
 - Removed stale `libs/virtual_display/Cargo.lock`; `libs/virtual_display` is a
   workspace member, so the root `Cargo.lock` is the lockfile used by normal
   workspace builds.
+- Added local patched dependencies under
+  `third_party/rustdesk-fold-patches/`.
+- Replaced root Linux/macOS `keepawake` and Linux `pam` dependencies with local
+  path dependencies:
+  - `third_party/rustdesk-fold-patches/keepawake-rs`
+  - `third_party/rustdesk-fold-patches/pam`
 
-Remaining high-alert constraints after the experiment:
+Vendored patch result:
 
-- `users 0.10.0` remains through `pam v0.7.0`
-  (`pam -> users`). It is Linux-only and `cargo tree --target
-  aarch64-linux-android --features flutter,hwcodec -i users` prints nothing.
-  Fixing this fully requires changing or forking the upstream `pam` dependency.
-- `libgit2-sys 0.14.2+1.5.1` remains through
-  `keepawake -> shadow-rs -> git2 -> libgit2-sys`. `keepawake` is declared only
-  for macOS/Linux and `cargo tree --target aarch64-linux-android --features
-  flutter,hwcodec -i libgit2-sys` prints nothing. Fixing this fully requires
-  changing or forking the upstream `keepawake` dependency chain.
+- `pam` is vendored from `rustdesk-org/pam` at
+  `7bfd25510202cd269292cbdd7c71f3977a6fd762`. The local patch replaces the
+  optional `users` dependency with `uzers` while preserving the crate name used
+  by source code.
+- `keepawake-rs` is vendored from `rustdesk-org/keepawake-rs` at
+  `64d568586dd16551d02120e19668d2b0fec8e3c9`. The local patch removes
+  unused `shadow-rs` build metadata generation, which removes the
+  `git2 -> libgit2-sys` alert chain.
+- `cargo tree --locked --target all --features flutter,hwcodec -i users`
+  returned no matching package.
+- `cargo tree --locked --target all --features flutter,hwcodec -i libgit2-sys`
+  returned no matching package.
+- `cargo tree --locked --target all --features flutter,hwcodec -i git2`
+  returned no matching package.
+- `cargo tree --locked --target all --features flutter,hwcodec -i shadow-rs`
+  returned no matching package.
+- `rg -n 'name = "(users|libgit2-sys|git2|shadow-rs)"' Cargo.lock` returned
+  no matches.
+
+Local patch validation:
+
+- `cargo check -p keepawake --locked --target x86_64-unknown-linux-gnu`
+  passed.
+- `cargo check -p pam --locked --features client --target
+  x86_64-unknown-linux-gnu` could not complete on this machine because the
+  system PAM development header `security/pam_appl.h` is not installed. The
+  failure occurred in `pam-sys` bindgen before compiling the local `pam`
+  wrapper code.
 
 Android APK validation:
 
@@ -108,7 +133,7 @@ Android APK validation:
   - `TMPDIR=/tmp/rustdesk-fold-tmp-dependabot-high`
 - Rust toolchain used: `rustc 1.80.0`
 - Build result: passed.
-- Build time: `2m27.435s`.
+- Build time: `11.296s` after cache reuse.
 - APK verifier result: passed.
 - Verified APK identity:
   - application ID: `com.rustdesk.fold`
@@ -117,12 +142,20 @@ Android APK validation:
   - native ABI: `arm64-v8a`
 - Test artifact:
   `artifacts/RustDesk-Fold-dependabot-high-alert-fixes-arm64-v8a-release-test.apk`
+- Test artifact SHA-256:
+  `b83cda20e99bdbefe16d6f61519d202f2a229230d4cb0592fa9cfc3b03190a9a`
 
 ## Release Gate
 
 Do not publish a formal APK release while high-severity Android-path alerts
 remain unresolved unless the release notes explicitly document the residual
 risk and the maintainer accepts it.
+
+For this experiment branch, the checked lockfile no longer contains the
+previously reported high-alert packages listed above, and the Android arm64
+release APK build and verifier passed. A formal public release still requires a
+GitHub Dependabot rescan after pushing or merging this branch, plus maintainer
+review of the downstream vendored dependency patches.
 
 For an experiment/test APK, use the development branch only and label the APK as
 a test artifact, not a formal release.

@@ -1,0 +1,34 @@
+[package]
+
+name = "pam"
+version = "0.7.0"
+authors = ["Florian Wilkens <gh@1wilkens.org>"]
+description = "Safe Rust wrappers for PAM authentication"
+license = "MIT OR Apache-2.0"
+categories = ["authentication"]
+
+repository = "https://github.com/1wilkens/pam/"
+documentation = "https://docs.rs/pam/"
+readme = "README.md"
+include = [ "LICENSE-*", "README.md", "CHANGELOG.md", "/src", "/examples"  ]
+
+edition = "2018"
+
+[badges]
+azure-devops = { project = "1wilkens/ci", pipeline = "pam" }
+
+[features]
+default = ["client"]
+
+functions = []
+client = ["users"]
+module = []
+
+[dependencies]
+pam-macros = "=0.0.3"
+libc    = "^0.2"
+pam-sys = { git="https://github.com/rustdesk-org/pam-sys", branch = "fix/v1.0.0-alpha4_gnuc_va_list" }
+users   = { package = "uzers", version = "^0.12", optional = true }
+
+[dev-dependencies]
+rpassword = "5.0"

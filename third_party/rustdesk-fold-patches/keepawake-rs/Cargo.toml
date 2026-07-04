@@ -1,0 +1,35 @@
+[package]
+name = "keepawake"
+version = "0.4.3"
+authors = ["Segev Finer <segev208@gmail.com>"]
+edition = "2021"
+rust-version = "1.63"
+description = "Keep your computer awake"
+repository = "https://github.com/segevfiner/keepawake-rs/"
+license = "MIT"
+keywords = ["caffeinate", "systemd-inhibit", "idle", "sleep", "power-management"]
+categories = ["command-line-utilities"]
+exclude = ["/tools/"]
+
+[dependencies]
+anyhow = "1.0"
+cfg-if = "1.0"
+clap = { version = "4.3", features = ["derive"], optional = true }
+clap_complete = { version = "4.3", optional = true }
+ctrlc = { version = "3.4", features = ["termination"], optional = true }
+sysinfo = { version = "0.29", optional = true }
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.48"
+features = [
+    "Win32_System_Power"
+]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "3.12"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9"
+
+[build-dependencies]
+winres = "0.1.12"
