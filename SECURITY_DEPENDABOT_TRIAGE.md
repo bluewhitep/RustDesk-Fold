@@ -1,7 +1,7 @@
-# Dependabot High Alert Triage
+# Dependabot Alert Triage
 
 Audit date: 2026-07-04
-Scope: GitHub Dependabot open high-severity alerts for `bluewhitep/RustDesk-Fold`
+Scope: GitHub Dependabot open high, moderate, and low alerts for `bluewhitep/RustDesk-Fold`
 Branch checked: `experiment/dependabot-high-alert-fixes`
 Snapshot commit checked: `ec6007b7df60d9701cee167ae1484c7cf9691dda`
 Official RustDesk baseline checked: `a2b79462ab63db2447a4f5c36e6257c74ae47230`
@@ -149,13 +149,100 @@ Android APK validation:
 
 Do not publish a formal APK release while high-severity Android-path alerts
 remain unresolved unless the release notes explicitly document the residual
-risk and the maintainer accepts it.
+risk and the maintainer accepts it. For public source release, also review the
+moderate and low limitations below because GitHub reports alerts from the whole
+lockfile, not only the Android APK target graph.
 
 For this experiment branch, the checked lockfile no longer contains the
 previously reported high-alert packages listed above, and the Android arm64
 release APK build and verifier passed. A formal public release still requires a
 GitHub Dependabot rescan after pushing or merging this branch, plus maintainer
-review of the downstream vendored dependency patches.
+review of the downstream vendored dependency patches and the remaining
+non-Android or upstream-git dependency limitations.
 
 For an experiment/test APK, use the development branch only and label the APK as
 a test artifact, not a formal release.
+
+## Moderate And Low Screenshot Triage
+
+Source evidence:
+
+- User-provided GitHub Dependabot UI screenshots on 2026-07-04 for:
+  - `is:open severity:moderate`
+  - `is:open severity:low`
+- GitHub UI dependency check source: commit
+  `7cdf3dbd251e83d2ca06fa1a4e1ee2614af82986`.
+- Screenshot counts:
+  - 16 open moderate alerts.
+  - 14 open low alerts.
+- GitHub API verification was not available in this environment because the
+  active `gh` token did not expose the `security_events` scope. This section
+  therefore uses the screenshots plus local Cargo evidence.
+
+Important rescan note:
+
+The local branch can only change source and lockfiles. GitHub Dependabot alert
+counts will not change until this branch is pushed or merged into the branch
+GitHub scans, and GitHub reruns dependency analysis.
+
+| Package / source | Screenshot alert(s) | Local evidence after this pass | Triage conclusion |
+|---|---|---|---|
+| `openssl` | moderate `#7`, `#8`, `#30`, `#31`; low `#25` | `Cargo.lock` contains `openssl 0.10.79` and `openssl-sys 0.9.115`. | Already handled by the high-alert fix pass. Requires GitHub rescan to close alerts. |
+| `rustls-webpki` | moderate `#17`; low `#18`, `#19` | `Cargo.lock` contains `rustls-webpki 0.103.13`. | Already handled by the high-alert fix pass. Requires GitHub rescan to close alerts. |
+| `users` | moderate `#3` | `Cargo.lock` no longer contains a `users` package; Linux user lookup was moved to `uzers 0.12.2`. | Already handled by the high-alert fix pass. Requires GitHub rescan to close alerts. |
+| `git2` | low `#14` | `Cargo.lock` no longer contains `git2` or `libgit2-sys` after vendoring `keepawake-rs` without `shadow-rs` build metadata. | Already handled by the high-alert fix pass. Requires GitHub rescan to close alert. |
+| `libs/virtual_display/Cargo.lock` stale nested lockfile | moderate `#33`, `#36`, `#39`, `#41`; low `#34`, `#35`, `#37`, `#40`, `#42` | `libs/virtual_display/Cargo.lock` was removed. `libs/virtual_display` is a workspace member, so the root `Cargo.lock` is the normal workspace lockfile. | Expected to disappear after GitHub rescans the default branch. |
+| `rpassword` | low `#29` | Old `rpassword 2.1.0` and `rpassword 5.0.1` were removed. `Cargo.lock` now contains only `rpassword 7.3.1`. | Expected fixed locally. Requires GitHub rescan. |
+| `bytes` | moderate `#13`; moderate `#41` in removed nested lockfile | Root `Cargo.lock` contains `bytes 1.12.0`. | Expected fixed locally for the root lockfile; nested-lockfile alert depends on GitHub recognizing the file removal. |
+| `crossbeam-channel` | moderate `#12` | `Cargo.lock` contains `crossbeam-channel 0.5.15`. | Expected fixed locally. Requires GitHub rescan. |
+| `idna` | moderate `#5` | `Cargo.lock` contains `idna 1.0.3` and `idna_adapter 1.0.0`. `idna_adapter` was held at `1.0.0` to preserve Cargo/Rust 1.80 compatibility. | Expected fixed locally. Requires GitHub rescan. |
+| `time` | moderate `#1`, `#15`; moderate `#36` in removed nested lockfile | Root `Cargo.lock` contains `time 0.3.41`; `time 0.1.45` still remains through macOS-only `fruitbasket 0.10.0`. `cargo tree --target aarch64-linux-android --features flutter,hwcodec -i time@0.1.45` printed nothing. | The Android APK path is not affected by `time 0.1.45`, but GitHub may keep a root `time` alert until the macOS `fruitbasket` chain is upgraded, replaced, removed, or the alert is dismissed as not used for this Android release. |
+| `tokio` | moderate `#33` in removed nested lockfile; low `#34`, `#40` in removed nested lockfile | Root `Cargo.lock` contains `tokio 1.46.1`. | Expected fixed for the stale nested lockfile after rescan. |
+| `tracing-subscriber` | low `#10` | Root `Cargo.lock` contains `tracing-subscriber 0.3.20`. | Expected fixed locally. Requires GitHub rescan. |
+| `rand` | low `#20`, `#21`; low `#42` in removed nested lockfile | Root `Cargo.lock` contains `rand 0.9.4`. Older `rand 0.6.5` and `rand 0.8.5` remain, but the screenshot alert text references `rand::rng()`, which is a `rand 0.9` API. | Expected fixed for the reported `rand::rng()` advisory after rescan, but verify in GitHub because multiple `rand` major versions remain in the lockfile. |
+| `glib` | moderate `#6` | `glib 0.10.3` remains through the Linux GStreamer `0.16` stack. `cargo tree --target aarch64-linux-android --features flutter,hwcodec -i glib@0.10.3` printed nothing. | Not in the Android arm64 APK dependency graph. Clearing the GitHub alert requires a desktop/Linux GStreamer stack upgrade or dismissing the alert as not used for the Android release. |
+| `atty` | low `#2`; low `#37` in removed nested lockfile | `atty 0.2.14` remains through `bindgen 0.59.2` build-dependencies in upstream git crates (`hwcodec`, `machine-uid`, `magnum-opus`, `pam-sys`). | The nested-lockfile alert should disappear after rescan. The root `Cargo.lock` alert remains unless those upstream git crates are patched or replaced with versions using newer `bindgen`. |
+
+Expected local improvements from this pass:
+
+- Removed stale `libs/virtual_display/Cargo.lock` alerts from the current tree.
+- Removed old `rpassword 2.1.0` and `rpassword 5.0.1`.
+- Updated root vulnerable dependency lines where compatible with Rust 1.80:
+  - `bytes 1.12.0`
+  - `crossbeam-channel 0.5.15`
+  - `idna 1.0.3`
+  - `time 0.3.41`
+  - `tokio 1.46.1`
+  - `tracing-subscriber 0.3.20`
+  - `rand 0.9.4`
+
+Validation for this pass:
+
+- Build command: `bash tools/dev/build_android_arm64_release.sh`
+- Build environment override:
+  - `VCPKG_ROOT=/tmp/rustdesk-fold-vcpkg.YuEc04/vcpkg`
+  - `CARGO_TARGET_DIR=/tmp/rustdesk-fold-target-dependabot-high`
+  - `TMPDIR=/tmp/rustdesk-fold-tmp-dependabot-high`
+- Build result: passed.
+- Build time: `2m15.616s` after partial dependency recompilation.
+- APK verifier result: passed.
+- Verified APK identity:
+  - application ID: `com.rustdesk.fold`
+  - application label: `RustDesk Fold`
+  - target SDK: `35`
+  - native ABI: `arm64-v8a`
+- Test artifact:
+  `artifacts/RustDesk-Fold-dependabot-medium-low-fixes-arm64-v8a-release-test.apk`
+- Test artifact SHA-256:
+  `9792fab1bd89ee657e865f2f76e1940a13dfe9976a730f913e4870dd19f9849f`
+
+Remaining non-high known limitations:
+
+- `time 0.1.45` remains via macOS-only `fruitbasket 0.10.0`; it is not selected
+  for the checked Android arm64 target.
+- `glib 0.10.3` remains via Linux-only GStreamer `0.16`; it is not selected for
+  the checked Android arm64 target.
+- `atty 0.2.14` remains through upstream git dependency build scripts pinned to
+  `bindgen 0.59`. Fixing this requires vendoring or upstreaming changes to
+  `hwcodec`, `machine-uid`, `magnum-opus`, and `pam-sys`, so it is intentionally
+  not folded into this minimal Android release dependency pass.
