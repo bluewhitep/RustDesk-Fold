@@ -1332,7 +1332,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "percent-encoding",
- "rand 0.8.5",
+ "rand 0.9.4",
  "serde 1.0.228",
  "serde_derive",
  "thiserror 1.0.61",
@@ -2278,7 +2278,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2690,7 +2690,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3757,7 +3757,7 @@ dependencies = [
  "osascript",
  "protobuf",
  "protobuf-codegen",
- "rand 0.8.5",
+ "rand 0.9.4",
  "regex",
  "rustls-native-certs",
  "rustls-pki-types",
@@ -4350,7 +4350,7 @@ dependencies = [
  "dashmap 6.1.0",
  "log",
  "parking_lot",
- "rand 0.8.5",
+ "rand 0.8.6",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -4469,7 +4469,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e310b3a6b5907f99202fcdb4960ff45b93735d7c7d96b760fcff8db2dc0e103d"
 dependencies = [
  "cfg-if 1.0.0",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -5194,7 +5194,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5711,9 +5711,9 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "openssl"
-version = "0.10.79"
+version = "0.10.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf0b434746ee2832f4f0baf10137e1cabb18cbe6912c69e2e33263c45250f542"
+checksum = "a45fa2aa886c42762255da344f0a0d313e254066c46aad76f300c3d3da62d967"
 dependencies = [
  "bitflags 2.9.1",
  "cfg-if 1.0.0",
@@ -5751,9 +5751,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.115"
+version = "0.9.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "158fe5b292746440aa6e7a7e690e55aeb72d41505e2804c23c6973ad0e9c9781"
+checksum = "b47e7e6bb2c38cd930d25a23b40fa52e068c10e85f3e03a7f5ba5aaca5713695"
 dependencies = [
  "cc",
  "libc",
@@ -5947,7 +5947,7 @@ dependencies = [
  "futures",
  "libc",
  "log",
- "rand 0.8.5",
+ "rand 0.8.6",
  "tokio",
  "winapi",
 ]
@@ -6106,7 +6106,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
 dependencies = [
  "phf_shared 0.11.3",
- "rand 0.8.5",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -6659,9 +6659,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -7075,13 +7075,13 @@ checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rpassword"
-version = "7.3.1"
+version = "7.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80472be3c897911d0137b2d2b9055faf6eeac5b14e324073d83bc17b191d7e3f"
+checksum = "f3bc4a3dd492cd6974dd3f32d6626ba9f36e5122e3df3b083474b104aebd139b"
 dependencies = [
  "libc",
  "rtoolbox",
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7378,7 +7378,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7436,7 +7436,7 @@ dependencies = [
  "security-framework 3.5.1",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7815,7 +7815,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "libc",
  "nix 0.23.2",
- "rand 0.8.5",
+ "rand 0.8.6",
  "win-sys",
 ]
 
@@ -8174,7 +8174,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c969a14b4a4c09c320416ebf880b3d5a81ad1612065741eb10521951c06c8991"
 dependencies = [
  "bytecodec",
- "rand 0.8.5",
+ "rand 0.8.6",
  "stun_codec",
  "tokio",
 ]
@@ -8846,7 +8846,7 @@ dependencies = [
  "base32",
  "constant_time_eq 0.2.6",
  "hmac",
- "rand 0.8.5",
+ "rand 0.8.6",
  "sha1",
  "sha2",
  "url",
@@ -10260,6 +10260,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-sys"
+version = "0.61.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
+dependencies = [
+ "windows-link 0.2.1",
+]
+
+[[package]]
 name = "windows-targets"
 version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10914,7 +10923,7 @@ dependencies = [
  "nix 0.26.4",
  "once_cell",
  "ordered-stream",
- "rand 0.8.5",
+ "rand 0.8.6",
  "serde 1.0.228",
  "serde_repr",
  "sha1",
