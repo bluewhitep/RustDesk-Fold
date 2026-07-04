@@ -246,3 +246,23 @@ Remaining non-high known limitations:
   `bindgen 0.59`. Fixing this requires vendoring or upstreaming changes to
   `hwcodec`, `machine-uid`, `magnum-opus`, and `pam-sys`, so it is intentionally
   not folded into this minimal Android release dependency pass.
+
+## Deferred Non-Android Or Upstream-Dependency Items
+
+These items are intentionally recorded for follow-up instead of being fixed in
+the current Android APK test pass.
+
+| Item | Current source | Android arm64 APK scope | Follow-up path |
+|---|---|---|---|
+| `atty 0.2.14` | Upstream git dependency build scripts pinned to `bindgen 0.59` in `hwcodec`, `machine-uid`, `magnum-opus`, and `pam-sys`. | Build-dependency path only; not an app runtime crate. It still appears in the Android target build graph. | Create a separate dependency-maintenance branch to vendor or upstream patches that move those crates off `bindgen 0.59`, then rebuild the APK. |
+| `glib 0.10.3` | Linux-only GStreamer `0.16` stack under `scrap` Wayland support. | Not selected by `cargo tree --target aarch64-linux-android --features flutter,hwcodec`. | Treat as a desktop/Linux dependency-maintenance task. Clearing it likely requires a larger GStreamer stack upgrade. |
+| `time 0.1.45` | macOS-only `fruitbasket 0.10.0`. | Not selected by `cargo tree --target aarch64-linux-android --features flutter,hwcodec`. | Treat as a macOS desktop dependency-maintenance task. Clearing it requires replacing or upgrading the `fruitbasket` chain. |
+
+Public-release handling:
+
+- Android test APKs may proceed with these three items documented because the
+  checked app runtime path is not affected.
+- A formal public source release should keep this section visible until GitHub
+  Dependabot is rescanned after push/merge and the maintainer decides whether
+  non-Android alerts should be fixed, dismissed as out-of-scope, or tracked as
+  desktop follow-up work.
