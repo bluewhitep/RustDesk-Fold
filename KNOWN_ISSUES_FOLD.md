@@ -32,6 +32,15 @@ Follow-up direction:
 
 - Review the touchpad gesture state machine for click, press, drag, and release.
 - Keep wheel-scroll mode separate from normal pointer drag mode.
+- Change the touchpad middle scroll button activation from long-press activation
+  to short tap/click activation.
 - Compare event sequences emitted by touchscreen mode and touchpad mode while
   dragging a remote window title bar and resize handle.
+- Add haptic feedback for touchpad interactions: single tap and two-finger tap
+  should vibrate once; long press should vibrate once on press and once again
+  after the long/heavy-press operation becomes active.
+- In the app settings page, rename the bottom "About RustDesk" entry to
+  "About RustDesk Fold"; keep the version number unchanged, keep the official
+  `rustdesk.com` URL, and add a second line for
+  `https://github.com/bluewhitep/RustDesk-Fold`.
 - Validate behavior on the target remote OS window manager after changes.
