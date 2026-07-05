@@ -22,6 +22,10 @@ import '../widgets/dialog.dart';
 import 'home_page.dart';
 import 'scan_page.dart';
 
+const _rustDeskHomeUrl = 'https://rustdesk.com/';
+const _rustDeskHomeLabel = 'rustdesk.com';
+const _foldGitHubUrl = 'https://github.com/bluewhitep/RustDesk-Fold';
+
 class SettingsPage extends StatefulWidget implements PageShape {
   @override
   final title = translate("Settings");
@@ -35,8 +39,6 @@ class SettingsPage extends StatefulWidget implements PageShape {
   @override
   State<SettingsPage> createState() => _SettingsState();
 }
-
-const url = 'https://rustdesk.com/';
 
 enum KeepScreenOn {
   never,
@@ -64,6 +66,31 @@ KeepScreenOn optionToKeepScreenOn(String value) {
     default:
       return KeepScreenOn.duringControlled;
   }
+}
+
+Widget _aboutUrlText(String text, {TextAlign textAlign = TextAlign.start}) {
+  return Text(
+    text,
+    textAlign: textAlign,
+    softWrap: true,
+    style: TextStyle(
+      decoration: TextDecoration.underline,
+    ),
+  );
+}
+
+Widget _aboutUrlLink({
+  required String label,
+  required String url,
+}) {
+  return InkWell(
+      onTap: () async {
+        await launchUrl(Uri.parse(url));
+      },
+      child: Padding(
+        padding: EdgeInsets.symmetric(vertical: 4),
+        child: _aboutUrlText(label),
+      ));
 }
 
 class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
@@ -951,19 +978,24 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             tiles: enhancementsTiles,
           ),
         SettingsSection(
-          title: Text(translate("About")),
+          title: Text('About RustDesk Fold'),
           tiles: [
             SettingsTile(
                 onPressed: (context) async {
-                  await launchUrl(Uri.parse(url));
+                  await launchUrl(Uri.parse(_rustDeskHomeUrl));
                 },
                 title: Text(translate("Version: ") + version),
-                value: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text('rustdesk.com',
-                      style: TextStyle(
-                        decoration: TextDecoration.underline,
-                      )),
+                description: Padding(
+                  padding: EdgeInsets.only(top: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _aboutUrlText(_rustDeskHomeLabel),
+                      SizedBox(height: 4),
+                      _aboutUrlText(_foldGitHubUrl),
+                    ],
+                  ),
                 ),
                 leading: Icon(Icons.info)),
             SettingsTile(
@@ -1093,22 +1125,16 @@ void showThemeSettings(OverlayDialogManager dialogManager) async {
 void showAbout(OverlayDialogManager dialogManager) {
   dialogManager.show((setState, close, context) {
     return CustomAlertDialog(
-      title: Text(translate('About RustDesk')),
-      content: Wrap(direction: Axis.vertical, spacing: 12, children: [
-        Text('Version: $version'),
-        InkWell(
-            onTap: () async {
-              const url = 'https://rustdesk.com/';
-              await launchUrl(Uri.parse(url));
-            },
-            child: Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('rustdesk.com',
-                  style: TextStyle(
-                    decoration: TextDecoration.underline,
-                  )),
-            )),
-      ]),
+      title: Text('About RustDesk Fold'),
+      content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Version: $version'),
+            SizedBox(height: 8),
+            _aboutUrlLink(label: _rustDeskHomeLabel, url: _rustDeskHomeUrl),
+            _aboutUrlLink(label: _foldGitHubUrl, url: _foldGitHubUrl),
+          ]),
       actions: [],
     );
   }, clickMaskDismiss: true, backDismiss: true);

@@ -17,6 +17,9 @@ import android.content.ClipboardManager
 import android.os.Bundle
 import android.os.Build
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import android.view.WindowManager
 import android.media.MediaCodecInfo
@@ -257,6 +260,9 @@ class MainActivity : FlutterActivity() {
                         result.success(false)
                     }
                 }
+                "fold_haptic_feedback" -> {
+                    result.success(runFoldHapticFeedback(call.arguments))
+                }
                 GET_VALUE -> {
                     if (call.arguments is String) {
                         if (call.arguments == KEY_IS_SUPPORT_VOICE_CALL) {
@@ -278,6 +284,39 @@ class MainActivity : FlutterActivity() {
                     result.error("-1", "No such method", null)
                 }
             }
+        }
+    }
+
+    private fun runFoldHapticFeedback(arguments: Any?): Boolean {
+        val args = arguments as? Map<*, *> ?: return false
+        val strength = ((args["strength"] as? Number)?.toInt() ?: 0).coerceIn(0, 80)
+        if (strength <= 0) {
+            return true
+        }
+        val durationMs = ((args["durationMs"] as? Number)?.toLong() ?: 12L).coerceIn(1L, 50L)
+        val amplitude = ((255 * strength) / 100).coerceIn(1, 255)
+        return try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val manager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                manager.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            if (!vibrator.hasVibrator()) {
+                false
+            } else {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createOneShot(durationMs, amplitude))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(durationMs)
+                }
+                true
+            }
+        } catch (e: Exception) {
+            Log.w(logTag, "Fold haptic feedback failed: ${e.message}")
+            false
         }
     }
 

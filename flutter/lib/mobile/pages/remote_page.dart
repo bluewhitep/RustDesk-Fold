@@ -101,6 +101,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   void Function(VoidCallback fn)? _foldLanguageSettingsSetState;
   var _foldInputRevision = 0;
   var _foldKeyboardInputMode = _FoldKeyboardInputMode.remoteImeKeyEvents;
+  var _foldHapticStrengthPercent = _kDefaultFoldHapticStrengthPercent;
   var _fitRemoteResolutionToFoldPane = false;
   var _foldRemotePaneRatio = _foldDefaultRemotePaneRatio;
   double? _foldResizePreviewRemotePaneRatio;
@@ -941,6 +942,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     }
     _foldKeyboardInputMode = _foldKeyboardInputModeFromValue(
         bind.mainGetLocalOption(key: _kFoldKeyboardInputModeOption));
+    _foldHapticStrengthPercent = _foldHapticStrengthFromOptionValue(
+        bind.mainGetLocalOption(key: _kFoldHapticStrengthOption));
   }
 
   _FoldTargetOs get _foldTargetOs =>
@@ -988,6 +991,24 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     ));
     if (mode == _FoldKeyboardInputMode.remoteImeKeyEvents) {
       unawaited(_ensureFoldRemoteImeKeyboardMode());
+    }
+  }
+
+  void _setFoldHapticStrengthPercent(
+    int percent, {
+    bool preview = false,
+  }) {
+    final next = _nearestFoldHapticStrengthPercent(percent);
+    if (next == _foldHapticStrengthPercent) {
+      return;
+    }
+    setState(() => _foldHapticStrengthPercent = next);
+    unawaited(bind.mainSetLocalOption(
+      key: _kFoldHapticStrengthOption,
+      value: next.toString(),
+    ));
+    if (preview) {
+      unawaited(_performFoldHapticFeedback(strengthPercent: next));
     }
   }
 
@@ -1384,6 +1405,67 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _foldHapticStrengthSlider(
+    void Function(VoidCallback fn) dialogSetState,
+  ) {
+    final strength = _nearestFoldHapticStrengthPercent(
+      _foldHapticStrengthPercent,
+    );
+    final activeIndex = _kFoldHapticStrengthValues.indexOf(strength);
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  translate('Vibration Strength'),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                _foldHapticStrengthLabel(strength),
+                style: const TextStyle(fontSize: 12, color: MyTheme.accent),
+              ),
+            ],
+          ),
+          Slider(
+            value: activeIndex.toDouble(),
+            min: 0,
+            max: (_kFoldHapticStrengthValues.length - 1).toDouble(),
+            divisions: _kFoldHapticStrengthValues.length - 1,
+            label: _foldHapticStrengthLabel(strength),
+            onChanged: (value) {
+              final nextIndex = value
+                  .round()
+                  .clamp(0, _kFoldHapticStrengthValues.length - 1)
+                  .toInt();
+              _setFoldHapticStrengthPercent(
+                _kFoldHapticStrengthValues[nextIndex],
+                preview: true,
+              );
+              dialogSetState(() {});
+            },
+          ),
+          Row(
+            children: [
+              for (final value in _kFoldHapticStrengthValues)
+                Expanded(
+                  child: Text(
+                    _foldHapticStrengthTickLabel(value),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showFoldLanguageSettings() {
     if (_isFoldLanguageSettingsOpen) {
       return;
@@ -1392,7 +1474,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     gFFI.dialogManager.show((dialogSetState, close, context) {
       _foldLanguageSettingsSetState = dialogSetState;
       return CustomAlertDialog(
-        title: Text(translate('Target OS')),
+        title: Text(translate('Settings')),
         content: SizedBox(
           width: 380,
           child: SingleChildScrollView(
@@ -1418,6 +1500,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 ),
                 for (final mode in _FoldKeyboardInputMode.values)
                   _foldKeyboardInputModeTile(mode, dialogSetState),
+                _foldHapticStrengthSlider(dialogSetState),
                 const Divider(color: MyTheme.border),
                 _foldShortcutSettingsTile(
                     _FoldShortcutCaptureTarget.previous, close),
@@ -1706,6 +1789,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       splitAxis: splitAxis,
       trackpadPlacement: _foldTrackpadPlacement,
       touchpadRatio: _foldTouchpadPaneRatio,
+      hapticStrengthPercent: _foldHapticStrengthPercent,
       ffi: gFFI,
       toolsBar: _foldInputToolsBar(),
       inputRevision: _foldInputRevision,

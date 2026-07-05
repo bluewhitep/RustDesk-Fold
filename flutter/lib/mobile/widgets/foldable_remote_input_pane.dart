@@ -5,6 +5,7 @@ class _FoldInputPane extends StatelessWidget {
     required this.splitAxis,
     required this.trackpadPlacement,
     required this.touchpadRatio,
+    required this.hapticStrengthPercent,
     required this.ffi,
     required this.keyboard,
     required this.onToggleTrackpadPlacement,
@@ -45,6 +46,7 @@ class _FoldInputPane extends StatelessWidget {
   final Axis splitAxis;
   final _TrackpadPlacement trackpadPlacement;
   final double touchpadRatio;
+  final int hapticStrengthPercent;
   final FFI ffi;
   final Widget keyboard;
   final Widget? toolsBar;
@@ -110,7 +112,10 @@ class _FoldInputPane extends StatelessWidget {
     final keyboardFlex = ((1 - touchpadRatio) * 1000).round();
     final trackpad = Expanded(
       flex: touchpadFlex,
-      child: _FoldTouchpad(ffi: ffi),
+      child: _FoldTouchpad(
+        ffi: ffi,
+        hapticStrengthPercent: hapticStrengthPercent,
+      ),
     );
     final keyboardPane = Expanded(
       flex: keyboardFlex,
@@ -588,9 +593,13 @@ class _FoldInputToolbar extends StatelessWidget {
 }
 
 class _FoldTouchpad extends StatefulWidget {
-  const _FoldTouchpad({required this.ffi});
+  const _FoldTouchpad({
+    required this.ffi,
+    required this.hapticStrengthPercent,
+  });
 
   final FFI ffi;
+  final int hapticStrengthPercent;
 
   @override
   State<_FoldTouchpad> createState() => _FoldTouchpadState();
@@ -599,16 +608,19 @@ class _FoldTouchpad extends StatefulWidget {
 class _FoldTouchpadState extends State<_FoldTouchpad> {
   static const double _tapSlop = 8.0;
   static const double _scrollScale = 0.65;
+  static const Duration _longPressDelay = Duration(milliseconds: 450);
 
   final Map<int, Offset> _activePointers = {};
   Offset? _lastFocalPoint;
   Offset _scrollRemainder = Offset.zero;
   Offset? _wheelPointerLastPosition;
-  Timer? _wheelLongPressTimer;
+  Timer? _longPressTimer;
   double _gestureDistance = 0.0;
+  double _wheelPointerDistance = 0.0;
   int _maxPointerCount = 0;
+  int? _primaryPointer;
   int? _wheelPointer;
-  bool _wheelLongPressActivated = false;
+  bool _longPressDragActive = false;
   bool _wheelScrollModeActive = false;
 
   Offset get _currentFocalPoint {
@@ -629,12 +641,19 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
       _gestureDistance = 0.0;
       _maxPointerCount = 0;
       _lastFocalPoint = event.localPosition;
+      _primaryPointer = event.pointer;
+      _tapHaptic();
+      _startLongPressTimer(event);
     }
     _activePointers[event.pointer] = event.localPosition;
     _maxPointerCount = _maxPointerCount < _activePointers.length
         ? _activePointers.length
         : _maxPointerCount;
     _lastFocalPoint = _currentFocalPoint;
+    if (_activePointers.length > 1) {
+      _cancelLongPressTimer();
+      _releaseLongPressDrag();
+    }
   }
 
   void _movePointer(PointerMoveEvent event) {
@@ -651,12 +670,19 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
     }
     _gestureDistance += delta.distance;
     if (_wheelScrollModeActive) {
+      _cancelLongPressTimer();
+      _releaseLongPressDrag();
       _sendTrackpadScroll(delta);
       return;
     }
     if (_activePointers.length >= 2) {
+      _cancelLongPressTimer();
+      _releaseLongPressDrag();
       _sendTrackpadScroll(delta);
     } else {
+      if (!_longPressDragActive && _gestureDistance >= _tapSlop) {
+        _cancelLongPressTimer();
+      }
       unawaited(widget.ffi.cursorModel.updatePan(
         delta,
         event.localPosition,
@@ -666,16 +692,28 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
   }
 
   void _endPointer(PointerEvent event) {
+    final wasPrimaryPointer = event.pointer == _primaryPointer;
     _activePointers.remove(event.pointer);
     if (_activePointers.isNotEmpty) {
+      if (wasPrimaryPointer) {
+        _cancelLongPressTimer();
+        _releaseLongPressDrag();
+        _primaryPointer = null;
+      }
       _lastFocalPoint = _currentFocalPoint;
       return;
     }
     final isTap = _gestureDistance < _tapSlop;
     final pointerCount = _maxPointerCount;
+    _cancelLongPressTimer();
     _lastFocalPoint = null;
     _gestureDistance = 0.0;
     _maxPointerCount = 0;
+    _primaryPointer = null;
+    if (_longPressDragActive) {
+      _releaseLongPressDrag();
+      return;
+    }
     if (_wheelScrollModeActive) {
       return;
     }
@@ -684,6 +722,50 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
     }
     unawaited(widget.ffi.inputModel
         .tap(pointerCount >= 2 ? MouseButtons.right : MouseButtons.left));
+  }
+
+  void _startLongPressTimer(PointerDownEvent event) {
+    _cancelLongPressTimer();
+    _longPressTimer = Timer(_longPressDelay, () {
+      if (!mounted ||
+          _primaryPointer != event.pointer ||
+          !_activePointers.containsKey(event.pointer) ||
+          _activePointers.length != 1 ||
+          _gestureDistance >= _tapSlop ||
+          _wheelScrollModeActive ||
+          _longPressDragActive) {
+        return;
+      }
+      _longPressDragActive = true;
+      _longPressHaptic();
+      unawaited(widget.ffi.inputModel.tapDown(MouseButtons.left));
+    });
+  }
+
+  void _cancelLongPressTimer() {
+    _longPressTimer?.cancel();
+    _longPressTimer = null;
+  }
+
+  void _releaseLongPressDrag() {
+    if (!_longPressDragActive) {
+      return;
+    }
+    _longPressDragActive = false;
+    unawaited(widget.ffi.inputModel.tapUp(MouseButtons.left));
+  }
+
+  void _tapHaptic() {
+    unawaited(_performFoldHapticFeedback(
+      strengthPercent: widget.hapticStrengthPercent,
+    ));
+  }
+
+  void _longPressHaptic() {
+    unawaited(_performFoldHapticFeedback(
+      strengthPercent: widget.hapticStrengthPercent,
+      activated: true,
+    ));
   }
 
   void _sendTrackpadScroll(Offset rawDelta) {
@@ -713,34 +795,26 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
     if (_wheelScrollModeActive == active) {
       return;
     }
+    _cancelLongPressTimer();
+    _releaseLongPressDrag();
     _scrollRemainder = Offset.zero;
     _activePointers.clear();
     _lastFocalPoint = null;
     _gestureDistance = 0.0;
     _maxPointerCount = 0;
+    _primaryPointer = null;
     setState(() => _wheelScrollModeActive = active);
   }
 
   void _onWheelTap() {
-    if (_wheelScrollModeActive) {
-      _setWheelScrollMode(false);
-      return;
-    }
-    unawaited(widget.ffi.inputModel.tap(MouseButtons.wheel));
+    _tapHaptic();
+    _setWheelScrollMode(!_wheelScrollModeActive);
   }
 
-  void _startWheelLongPressTimer(PointerDownEvent event) {
-    _wheelLongPressTimer?.cancel();
+  void _startWheelPointer(PointerDownEvent event) {
     _wheelPointer = event.pointer;
     _wheelPointerLastPosition = event.localPosition;
-    _wheelLongPressActivated = false;
-    _wheelLongPressTimer = Timer(const Duration(milliseconds: 450), () {
-      if (!mounted || _wheelPointer != event.pointer) {
-        return;
-      }
-      _wheelLongPressActivated = true;
-      _setWheelScrollMode(true);
-    });
+    _wheelPointerDistance = 0.0;
   }
 
   void _moveWheelPointer(PointerMoveEvent event) {
@@ -749,11 +823,12 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
     }
     final previous = _wheelPointerLastPosition ?? event.localPosition;
     _wheelPointerLastPosition = event.localPosition;
-    if (!_wheelScrollModeActive) {
-      return;
-    }
     final delta = event.localPosition - previous;
     if (delta == Offset.zero) {
+      return;
+    }
+    _wheelPointerDistance += delta.distance;
+    if (!_wheelScrollModeActive) {
       return;
     }
     _sendTrackpadScroll(delta);
@@ -763,37 +838,29 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
     if (event.pointer != _wheelPointer) {
       return;
     }
-    _wheelLongPressTimer?.cancel();
-    _wheelLongPressTimer = null;
+    final isTap = _wheelPointerDistance < _tapSlop;
     _wheelPointer = null;
     _wheelPointerLastPosition = null;
-    if (_wheelLongPressActivated) {
-      _wheelLongPressActivated = false;
-      return;
+    _wheelPointerDistance = 0.0;
+    if (isTap) {
+      _onWheelTap();
     }
-    _wheelLongPressActivated = false;
-    _onWheelTap();
   }
 
   void _cancelWheelPointer(PointerEvent event) {
     if (event.pointer != _wheelPointer) {
       return;
     }
-    _wheelLongPressTimer?.cancel();
-    _wheelLongPressTimer = null;
     _wheelPointer = null;
     _wheelPointerLastPosition = null;
-    _wheelLongPressActivated = false;
+    _wheelPointerDistance = 0.0;
   }
 
   @override
   void dispose() {
-    _wheelLongPressTimer?.cancel();
+    _cancelLongPressTimer();
+    _releaseLongPressDrag();
     super.dispose();
-  }
-
-  void _onWheelLongPressStart() {
-    _setWheelScrollMode(true);
   }
 
   Widget _trackpadCenterIcon() {
@@ -872,7 +939,7 @@ class _FoldTouchpadState extends State<_FoldTouchpad> {
     return Expanded(
       child: Listener(
         behavior: HitTestBehavior.opaque,
-        onPointerDown: _startWheelLongPressTimer,
+        onPointerDown: _startWheelPointer,
         onPointerMove: _moveWheelPointer,
         onPointerUp: _endWheelPointer,
         onPointerCancel: _cancelWheelPointer,

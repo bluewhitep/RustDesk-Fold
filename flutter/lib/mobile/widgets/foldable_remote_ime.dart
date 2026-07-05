@@ -147,6 +147,86 @@ const _kFoldLanguageSwitchModeOption = 'fold.languageSwitchMode';
 const _kFoldModifierDisplayStyleOption = 'fold.modifierDisplayStyle';
 const _kFoldRemotePaneRatioOption = 'fold.remotePaneRatio';
 const _kFoldKeyboardInputModeOption = 'fold.keyboardInputMode';
+const _kFoldHapticStrengthOption = 'fold.hapticStrengthPercent';
+const _kDefaultFoldHapticStrengthPercent = 50;
+const _kFoldHapticStrengthValues = <int>[0, 20, 50, 80];
+
+int _foldHapticStrengthFromOptionValue(String value) {
+  final parsed = int.tryParse(value);
+  if (parsed == null) {
+    return _kDefaultFoldHapticStrengthPercent;
+  }
+  return _nearestFoldHapticStrengthPercent(parsed);
+}
+
+int _nearestFoldHapticStrengthPercent(int value) {
+  var nearest = _kFoldHapticStrengthValues.first;
+  var nearestDistance = (value - nearest).abs();
+  for (final candidate in _kFoldHapticStrengthValues.skip(1)) {
+    final distance = (value - candidate).abs();
+    if (distance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+String _foldHapticStrengthLabel(int percent) {
+  final value = _nearestFoldHapticStrengthPercent(percent);
+  switch (value) {
+    case 0:
+      return translate('Off');
+    case 20:
+      return '${translate('Haptic Weak')} 20%';
+    case 50:
+      return '${translate('Haptic Normal')} 50%';
+    case 80:
+      return '${translate('Haptic Strong')} 80%';
+  }
+  return '$value%';
+}
+
+String _foldHapticStrengthTickLabel(int percent) {
+  final value = _nearestFoldHapticStrengthPercent(percent);
+  switch (value) {
+    case 0:
+      return translate('Off');
+    case 20:
+      return translate('Haptic Weak');
+    case 50:
+      return translate('Haptic Normal');
+    case 80:
+      return translate('Haptic Strong');
+  }
+  return '$value%';
+}
+
+Future<void> _performFoldHapticFeedback({
+  required int strengthPercent,
+  bool activated = false,
+}) async {
+  final strength = _nearestFoldHapticStrengthPercent(strengthPercent);
+  if (strength <= 0) {
+    return;
+  }
+  if (isAndroid) {
+    try {
+      await gFFI.invokeMethod('fold_haptic_feedback', {
+        'strength': strength,
+        'durationMs': activated ? 24 : 12,
+      });
+      return;
+    } catch (_) {
+      // Fall through to Flutter's coarse haptic presets if the native bridge is unavailable.
+    }
+  }
+  if (activated) {
+    await HapticFeedback.mediumImpact();
+  } else {
+    await HapticFeedback.selectionClick();
+  }
+}
 
 class _FoldModifierLabels {
   const _FoldModifierLabels({
