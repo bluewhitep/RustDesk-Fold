@@ -84,6 +84,8 @@ uninstall `com.rustdesk.fold`, or clear app data during normal update testing.
   snapshot and future upstream-submodule experiment plan.
 - [KNOWN_ISSUES_FOLD.md](KNOWN_ISSUES_FOLD.md): Fold-specific known issues
   found during maintainer device testing.
+- [SECURITY.md](SECURITY.md): security reporting policy for Fold-specific
+  issues.
 - [SECURITY_DEPENDABOT_TRIAGE.md](SECURITY_DEPENDABOT_TRIAGE.md): high-severity
   Dependabot alert triage and dependency-fix compatibility notes.
 - [UPSTREAM.md](UPSTREAM.md): upstream RustDesk attribution and baseline notes.
