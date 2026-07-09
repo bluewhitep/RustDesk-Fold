@@ -3656,7 +3656,7 @@ pub async fn handle_login_from_ui(
     remember: bool,
     peer: &mut Stream,
 ) {
-    let mut hash_password = if password.is_empty() {
+    let mut login_hash_bytes = if password.is_empty() {
         let mut password2 = lc.read().unwrap().password.clone();
         if password2.is_empty() {
             password2 = lc.read().unwrap().config.password.clone();
@@ -3674,13 +3674,13 @@ pub async fn handle_login_from_ui(
         lc.write().unwrap().remember = remember;
         res[..].into()
     };
-    lc.write().unwrap().password = hash_password.clone();
+    lc.write().unwrap().password = login_hash_bytes.clone();
     let mut hasher2 = Sha256::new();
-    hasher2.update(&hash_password[..]);
+    hasher2.update(&login_hash_bytes[..]);
     hasher2.update(&lc.read().unwrap().hash.challenge);
-    hash_password = hasher2.finalize()[..].to_vec();
+    login_hash_bytes = hasher2.finalize()[..].to_vec();
 
-    send_login(lc.clone(), os_username, os_password, hash_password, peer).await;
+    send_login(lc.clone(), os_username, os_password, login_hash_bytes, peer).await;
 }
 
 async fn send_switch_login_request(
@@ -3792,6 +3792,7 @@ pub trait Interface: Send + Clone + 'static + Sized {
 #[derive(Clone)]
 pub enum Data {
     Close,
+    RejectInsecureConnection,
     Login((String, String, String, bool)),
     Message(Message),
     SendFiles((i32, JobType, String, String, i32, bool, bool)),
@@ -3815,9 +3816,31 @@ pub enum Data {
     ElevateWithLogon(String, String),
     NewVoiceCall,
     CloseVoiceCall,
+    ContinueInsecureConnection,
     ResetDecoder(Option<usize>),
     RenameFile((i32, String, String, bool)),
     TakeScreenshot((i32, String)),
+}
+
+pub async fn confirm_insecure_connection(
+    interface: &impl Interface,
+    receiver: &mut UnboundedReceiver<Data>,
+) -> bool {
+    interface.msgbox(
+        "insecure-connection-nocancel-hasclose",
+        "Insecure Connection",
+        "conn-e2ee-unavailable-tip",
+        "",
+    );
+    while let Some(data) = receiver.recv().await {
+        match data {
+            Data::ContinueInsecureConnection => return true,
+            Data::RejectInsecureConnection => return false,
+            Data::Close => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Keycode for key events.

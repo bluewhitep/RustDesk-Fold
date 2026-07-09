@@ -411,9 +411,8 @@ class _FileManagerViewState extends State<FileManagerView> {
   final _globalHeaderKey = GlobalKey();
 
   /// [_lastClickTime], [_lastClickEntry] help to handle double click
-  int _lastClickTime = DateTime.now().millisecondsSinceEpoch -
-      bind.getDoubleClickTime().toInt() -
-      1000;
+  var _lastClickTime =
+      DateTime.now().millisecondsSinceEpoch - bind.getDoubleClickTime() - 1000;
   Entry? _lastClickEntry;
 
   double? _windowWidthPrev;
