@@ -14,6 +14,7 @@ rebases.
 |---|---|---|---|---|
 | `pam` | `https://github.com/rustdesk-org/pam` | `7bfd25510202cd269292cbdd7c71f3977a6fd762` | `MIT OR Apache-2.0` | Replaced optional `users` dependency with `uzers` while preserving the crate name used by source code; removed nested workspace metadata so the crate can be embedded in this workspace. |
 | `keepawake-rs` | `https://github.com/rustdesk-org/keepawake-rs` | `64d568586dd16551d02120e19668d2b0fec8e3c9` | `MIT` | Removed unused `shadow-rs` build metadata generation to remove the `git2 -> libgit2-sys` alert chain. |
+| `users-compat` | `https://crates.io/crates/uzers` | `0.12.2` | `MIT` | Exposes the maintained `uzers` implementation under the `users` crate name required by the pinned `hbb_common` submodule. |
 
 ## Maintenance Rules
 

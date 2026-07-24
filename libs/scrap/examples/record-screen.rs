@@ -1,11 +1,11 @@
 extern crate docopt;
-extern crate quest;
 extern crate repng;
 extern crate scrap;
 extern crate serde;
 extern crate webm;
 
 use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -52,6 +52,15 @@ enum Codec {
     Vp9,
 }
 
+fn read_input(prompt: &str) -> io::Result<String> {
+    print!("{prompt}");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(input)
+}
+
 fn main() -> io::Result<()> {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
@@ -72,12 +81,8 @@ fn main() -> io::Result<()> {
     } {
         Ok(file) => file,
         Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            if loop {
-                quest::ask("Overwrite the existing file? [y/N] ");
-                if let Some(b) = quest::yesno(false)? {
-                    break b;
-                }
-            } {
+            let answer = read_input("Overwrite the existing file? [y/N] ")?;
+            if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
                 File::create(&args.arg_path)?
             } else {
                 return Ok(());
@@ -118,8 +123,7 @@ fn main() -> io::Result<()> {
     thread::spawn({
         let stop = stop.clone();
         move || {
-            let _ = quest::ask("Recording! Press ⏎ to stop.");
-            let _ = quest::text();
+            let _ = read_input("Recording! Press ⏎ to stop.");
             stop.store(true, Ordering::Release);
         }
     });

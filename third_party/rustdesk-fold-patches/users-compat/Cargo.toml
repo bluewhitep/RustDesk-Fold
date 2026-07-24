@@ -1,0 +1,17 @@
+[package]
+name = "users"
+version = "0.11.1"
+edition = "2021"
+rust-version = "1.63"
+publish = false
+description = "Compatibility adapter from users to the maintained uzers fork"
+license = "MIT"
+
+[features]
+default = ["cache", "mock", "logging"]
+cache = ["uzers/cache"]
+mock = ["uzers/mock"]
+logging = ["uzers/logging"]
+
+[dependencies]
+uzers = { version = "0.12.2", default-features = false }
