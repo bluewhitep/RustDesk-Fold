@@ -1,5 +1,86 @@
 # Dependabot Alert Triage
 
+Current remediation date: 2026-07-24
+Current release target: `v_1.4.9_batch_2`
+Current fix branch: `hotfix/dependency-security-1-4-9-batch-2`
+Current 1.4.9 baseline: `89b4651c5940a73b9c655e5a932a8aa05c477a8c`
+
+## Batch 2 Security Reapplication
+
+The RustDesk 1.4.9 source update replaced the dependency files that had carried
+the earlier downstream security fixes. Batch 2 reapplies those fixes on the
+current 1.4.9 source without changing Fold input behavior or Android runtime
+features.
+
+Applied changes:
+
+- Raised the declared Rust baseline to `1.88` because the patched
+  `time 0.3.47` dependency requires Rust 1.88.
+- Restored the local `pam` and `keepawake-rs` patches, removing the vulnerable
+  `users 0.10.0` and `git2 -> libgit2-sys` paths.
+- Added a minimal local `users 0.11.1` compatibility adapter that re-exports
+  maintained `uzers 0.12.2` for the pinned `hbb_common` build dependency.
+- Updated compatible root lockfile dependencies, including `openssl 0.10.80`,
+  `rustls-webpki 0.103.13`, `quinn-proto 0.11.15`, `bytes 1.12.0`,
+  `crossbeam-channel 0.5.15`, `tracing-subscriber 0.3.20`, `rand 0.9.4`,
+  `time 0.3.47`, `idna 1.0.3`, `crossbeam-epoch 0.9.20`, `anyhow 1.0.103`,
+  and `memmap2 0.9.11`.
+- Updated Linux-only `fuser` to `0.16`.
+- Removed the stale workspace-member lockfile
+  `libs/virtual_display/Cargo.lock`.
+- Removed the unused `quest -> rpassword 2.1.0` example dependency and replaced
+  its terminal input calls with the Rust standard library.
+
+Local dependency evidence:
+
+- The Android arm64 dependency graph selects `users 0.11.1`,
+  `openssl 0.10.80`, `rustls-webpki 0.103.13`, and `time 0.3.47`.
+- `users 0.10.0`, `users 0.11.0`, `git2`, `libgit2-sys`, `quest`, and
+  `rpassword` are absent from the locked Android arm64 graph.
+- `cargo check --locked --target aarch64-linux-android --features
+  flutter,hwcodec` passed with Rust 1.88.
+- Focused checks for the `users` adapter and the modified `record-screen`
+  example passed.
+
+Local Android release validation:
+
+- `flutter analyze` passed with no issues.
+- All 9 focused modifier-key regression tests passed.
+- The Rust Android arm64 release library and signed Flutter release APK built
+  successfully.
+- APK verification passed for application ID `com.rustdesk.fold`, application
+  label `RustDesk Fold`, version `1.4.9` (`versionCode 69`), target SDK `35`,
+  and native ABI `arm64-v8a`.
+- The signing certificate SHA-256 digest matches the Batch 1 release:
+  `b25b5a0e0f8ec78bb47274ea23c78987bf3a97c68a6b99bda9a154abb6b37714`.
+- The pre-publication APK SHA-256 is
+  `f1a88c761bc006f0a4e36aa003c649879c02a6cf223d81eea1eaae4028ad54f9`.
+
+Fresh `cargo-audit` database results also report advisories that were not part
+of the earlier GitHub alert set:
+
+- `quick-xml 0.30.0`, `0.31.0`, and `0.37.5` require `>=0.41.0`. The first two
+  versions are outside the Android graph; `0.37.5` is an Android build-time path
+  through pinned upstream build dependencies. Resolving it requires coordinated
+  parent dependency upgrades rather than a compatible lockfile update.
+- `time 0.1.45` remains in the macOS-only `fruitbasket` path and is not selected
+  for Android arm64.
+- Unmaintained or unsound `atty 0.2.14` and `glib 0.18.5` remain in upstream
+  build/desktop paths and require broader upstream dependency migration.
+
+These residual items are recorded explicitly; this document does not claim a
+repository-wide zero-advisory result. The Batch 2 release gate remains:
+
+1. Flutter analysis and focused input tests pass.
+2. The signed Android arm64 release APK builds and passes package verification.
+3. The fix is merged to the GitHub default branch.
+4. GitHub Dependabot completes its rescan and the result is reviewed before the
+   release tag is created.
+
+Future upstream source updates must preserve or deliberately reapply the
+downstream dependency delta, followed by locked dependency checks, Android
+release verification, and a new Dependabot scan.
+
 Audit date: 2026-07-04
 Scope: GitHub Dependabot open high, moderate, and low alerts for `bluewhitep/RustDesk-Fold`
 Branch checked: `experiment/dependabot-high-alert-fixes`
