@@ -99,6 +99,14 @@ _FoldRemoteImeKeyEvent? _foldRemoteImeKeyEventForKeyName(String key) {
     return _foldRemoteImeKeyEventForCharacter(key.substring(3).toLowerCase());
   }
   switch (key) {
+    case 'VK_CONTROL':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_CONTROL', usbHid: 0xE0);
+    case 'VK_SHIFT':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_SHIFT', usbHid: 0xE1);
+    case 'VK_MENU':
+      return const _FoldRemoteImeKeyEvent(keyName: 'VK_MENU', usbHid: 0xE2);
+    case 'Meta':
+      return const _FoldRemoteImeKeyEvent(keyName: 'Meta', usbHid: 0xE3);
     case 'VK_ENTER':
     case 'VK_RETURN':
       return _FoldRemoteImeKeyEvent(keyName: key, usbHid: 0x28);

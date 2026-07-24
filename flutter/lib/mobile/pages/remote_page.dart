@@ -1608,13 +1608,37 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   void _inputLocalKeyboardKey(String key) {
+    final shortcut = _shortcutFromCurrentModifiers(key);
     if (kDebugMode) {
       debugPrint(
         'fold virtual keyboard: mode=Key Events, '
         'key=$key, path=sessionInputKey',
       );
     }
-    _withLocalKeyboardInput(() => inputModel.inputKey(key));
+    _withLocalKeyboardInput(() => _sendFoldLegacyShortcutPress(shortcut));
+  }
+
+  void _inputLocalKeyboardModifierPress(String key) {
+    final remoteImeKey =
+        _foldKeyboardInputMode == _FoldKeyboardInputMode.remoteImeKeyEvents
+            ? _foldRemoteImeKeyEventForKeyName(key)
+            : null;
+    _withLocalKeyboardInput(() {
+      if (remoteImeKey == null) {
+        _sendFoldLegacyShortcutPress(_FoldKeyShortcut(key: key));
+        return;
+      }
+      unawaited(_queueFoldRemoteImeAction(
+        () => _sendFoldRemoteImeKeySequence(
+          remoteImeKey.keyName,
+          remoteImeKey.usbHid,
+          ctrl: false,
+          alt: false,
+          shift: false,
+          command: false,
+        ),
+      ));
+    });
   }
 
   void _inputLocalKeyboardRemoteImeKey(String keyName, int usbHid) {
@@ -1798,6 +1822,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           _canFitRemoteResolutionToFoldPane && _fitRemoteResolutionToFoldPane,
       canFitRemoteResolution: _canFitRemoteResolutionToFoldPane,
       onToggleTrackpadPlacement: _toggleFoldTrackpadPlacement,
+      onModifierPressed: _inputLocalKeyboardModifierPress,
       onModifierChanged: _notifyFoldInputStateChanged,
       onDisplayModeSelected: (mode) {
         setState(() => _foldRemoteDisplayMode = mode);
@@ -1847,6 +1872,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         onSpecialKey: _inputLocalKeyboardKey,
         onRemoteImeKeyEvent: _inputLocalKeyboardRemoteImeKey,
         onComboKey: _inputLocalKeyboardCombo,
+        onModifierPressed: _inputLocalKeyboardModifierPress,
         onModifierChanged: _notifyFoldInputStateChanged,
         isCapturingShortcut: _foldShortcutCaptureTarget != null,
         onCaptureShortcutKey: _captureFoldShortcutKey,

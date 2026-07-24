@@ -9,6 +9,7 @@ class _FoldInputPane extends StatelessWidget {
     required this.ffi,
     required this.keyboard,
     required this.onToggleTrackpadPlacement,
+    required this.onModifierPressed,
     required this.onModifierChanged,
     required this.inputRevision,
     required this.displayMode,
@@ -51,6 +52,7 @@ class _FoldInputPane extends StatelessWidget {
   final Widget keyboard;
   final Widget? toolsBar;
   final VoidCallback onToggleTrackpadPlacement;
+  final ValueChanged<String> onModifierPressed;
   final VoidCallback onModifierChanged;
   final int inputRevision;
   final _FoldRemoteDisplayMode displayMode;
@@ -162,6 +164,7 @@ class _FoldInputPane extends StatelessWidget {
               previousLanguageTooltip: previousLanguageTooltip,
               nextLanguageTooltip: nextLanguageTooltip,
               onToggleTrackpadPlacement: onToggleTrackpadPlacement,
+              onModifierPressed: onModifierPressed,
               onModifierChanged: onModifierChanged,
               onDisplayModeSelected: onDisplayModeSelected,
               onToggleFitRemoteResolution: onToggleFitRemoteResolution,
@@ -214,6 +217,7 @@ class _FoldInputToolbar extends StatelessWidget {
     required this.previousLanguageTooltip,
     required this.nextLanguageTooltip,
     required this.onToggleTrackpadPlacement,
+    required this.onModifierPressed,
     required this.onModifierChanged,
     required this.onDisplayModeSelected,
     required this.onToggleFitRemoteResolution,
@@ -252,6 +256,7 @@ class _FoldInputToolbar extends StatelessWidget {
   final String previousLanguageTooltip;
   final String nextLanguageTooltip;
   final VoidCallback onToggleTrackpadPlacement;
+  final ValueChanged<String> onModifierPressed;
   final VoidCallback onModifierChanged;
   final ValueChanged<_FoldRemoteDisplayMode> onDisplayModeSelected;
   final VoidCallback onToggleFitRemoteResolution;
@@ -383,6 +388,7 @@ class _FoldInputToolbar extends StatelessWidget {
     required String label,
     required bool selected,
     required VoidCallback onPressed,
+    required VoidCallback onLongPress,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -401,6 +407,7 @@ class _FoldInputToolbar extends StatelessWidget {
             ),
           ),
           onPressed: onPressed,
+          onLongPress: onLongPress,
           child: Text(
             label,
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
@@ -497,25 +504,39 @@ class _FoldInputToolbar extends StatelessWidget {
   }
 
   List<Widget> _modifierButtons(_FoldModifierLabels modifierLabels) {
+    final isCapturingShortcut = shortcutCaptureLabel != null;
+
     final shift = _modifierButton(
       label: translate('Shift'),
       selected: inputModel.shift,
-      onPressed: () => _toggleModifier((model) => model.shift = !model.shift),
+      onPressed: isCapturingShortcut
+          ? () => _toggleModifier((model) => model.shift = !model.shift)
+          : () => onModifierPressed('VK_SHIFT'),
+      onLongPress: () => _toggleModifier((model) => model.shift = !model.shift),
     );
     final control = _modifierButton(
       label: modifierLabels.control,
       selected: inputModel.ctrl,
-      onPressed: () => _toggleModifier((model) => model.ctrl = !model.ctrl),
+      onPressed: isCapturingShortcut
+          ? () => _toggleModifier((model) => model.ctrl = !model.ctrl)
+          : () => onModifierPressed('VK_CONTROL'),
+      onLongPress: () => _toggleModifier((model) => model.ctrl = !model.ctrl),
     );
     final alt = _modifierButton(
       label: modifierLabels.alt,
       selected: inputModel.alt,
-      onPressed: () => _toggleModifier((model) => model.alt = !model.alt),
+      onPressed: isCapturingShortcut
+          ? () => _toggleModifier((model) => model.alt = !model.alt)
+          : () => onModifierPressed('VK_MENU'),
+      onLongPress: () => _toggleModifier((model) => model.alt = !model.alt),
     );
     final meta = _modifierButton(
       label: modifierLabels.meta,
       selected: inputModel.command,
-      onPressed: () =>
+      onPressed: isCapturingShortcut
+          ? () => _toggleModifier((model) => model.command = !model.command)
+          : () => onModifierPressed('Meta'),
+      onLongPress: () =>
           _toggleModifier((model) => model.command = !model.command),
     );
     if (modifierDisplayStyle == _FoldModifierDisplayStyle.mac) {

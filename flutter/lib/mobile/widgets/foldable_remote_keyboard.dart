@@ -7,6 +7,7 @@ class _LocalRemoteKeyboard extends StatefulWidget {
     required this.onCharacter,
     required this.onSpecialKey,
     required this.onComboKey,
+    required this.onModifierPressed,
     required this.onModifierChanged,
     required this.isCapturingShortcut,
     required this.onCaptureShortcutKey,
@@ -18,6 +19,7 @@ class _LocalRemoteKeyboard extends StatefulWidget {
   final FFI ffi;
   final ValueChanged<String> onCharacter;
   final ValueChanged<String> onSpecialKey;
+  final ValueChanged<String> onModifierPressed;
   final void Function(String keyName, int usbHid) onRemoteImeKeyEvent;
   final ValueChanged<String> onCaptureShortcutKey;
   final VoidCallback onModifierChanged;
@@ -69,11 +71,14 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
     setState(() => _layer = layer);
   }
 
-  void _releaseMomentaryShift() {
-    if (!inputModel.shift) {
+  void _releaseActiveModifiers() {
+    if (!inputModel.shift &&
+        !inputModel.ctrl &&
+        !inputModel.alt &&
+        !inputModel.command) {
       return;
     }
-    setState(() => inputModel.shift = false);
+    setState(inputModel.resetModifiers);
     widget.onModifierChanged();
   }
 
@@ -91,11 +96,12 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
       shift: shift,
       command: command,
     );
-    _releaseMomentaryShift();
+    _releaseActiveModifiers();
   }
 
   Widget _keyButton({
     required VoidCallback? onPressed,
+    VoidCallback? onLongPress,
     String? label,
     IconData? icon,
     int flex = 1,
@@ -120,6 +126,7 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
           ),
         ),
         onPressed: onPressed,
+        onLongPress: onLongPress,
         child: icon == null
             ? FittedBox(
                 fit: BoxFit.scaleDown,
@@ -207,11 +214,11 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
             : null;
         if (remoteImeKey != null) {
           widget.onRemoteImeKeyEvent(remoteImeKey.keyName, remoteImeKey.usbHid);
-          _releaseMomentaryShift();
+          _releaseActiveModifiers();
           return;
         }
         widget.onCharacter(char);
-        _releaseMomentaryShift();
+        _releaseActiveModifiers();
       },
     );
   }
@@ -242,11 +249,11 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
             : null;
         if (remoteImeKey != null) {
           widget.onRemoteImeKeyEvent(remoteImeKey.keyName, remoteImeKey.usbHid);
-          _releaseMomentaryShift();
+          _releaseActiveModifiers();
           return;
         }
         widget.onSpecialKey(key);
-        _releaseMomentaryShift();
+        _releaseActiveModifiers();
       },
     );
   }
@@ -255,6 +262,7 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
     String label,
     bool active,
     VoidCallback onPressed,
+    VoidCallback onLongPress,
     double keyHeight,
     double fontSize,
     double iconSize,
@@ -266,6 +274,7 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
       iconSize: iconSize,
       selected: active,
       onPressed: onPressed,
+      onLongPress: onLongPress,
     );
   }
 
@@ -359,9 +368,19 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
       }
     }
 
+    void pressModifier(String key, void Function() update) {
+      if (widget.isCapturingShortcut) {
+        toggleModifier(key, update);
+        return;
+      }
+      widget.onModifierPressed(key);
+    }
+
     final shift = _modifierKey(
         translate('Shift'),
         inputModel.shift,
+        () => pressModifier(
+            'VK_SHIFT', () => inputModel.shift = !inputModel.shift),
         () => toggleModifier(
             'VK_SHIFT', () => inputModel.shift = !inputModel.shift),
         keyHeight,
@@ -370,6 +389,8 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
     final control = _modifierKey(
         _modifierLabels.control,
         inputModel.ctrl,
+        () => pressModifier(
+            'VK_CONTROL', () => inputModel.ctrl = !inputModel.ctrl),
         () => toggleModifier(
             'VK_CONTROL', () => inputModel.ctrl = !inputModel.ctrl),
         keyHeight,
@@ -378,6 +399,7 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
     final alt = _modifierKey(
         _modifierLabels.alt,
         inputModel.alt,
+        () => pressModifier('VK_MENU', () => inputModel.alt = !inputModel.alt),
         () => toggleModifier('VK_MENU', () => inputModel.alt = !inputModel.alt),
         keyHeight,
         fontSize,
@@ -385,6 +407,8 @@ class _LocalRemoteKeyboardState extends State<_LocalRemoteKeyboard> {
     final meta = _modifierKey(
         _modifierLabels.meta,
         inputModel.command,
+        () => pressModifier(
+            'Meta', () => inputModel.command = !inputModel.command),
         () => toggleModifier(
             'Meta', () => inputModel.command = !inputModel.command),
         keyHeight,
